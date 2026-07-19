@@ -1,0 +1,24 @@
+{
+  "name": "inboxplease",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-assisted Facebook Messenger commerce for Bangla-first sellers",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "cloudflare:credentials:normalize": "node scripts/normalize-cloudflare-credentials.mjs",
+    "cloudflare:audit": "node scripts/cloudflare-resources.mjs audit",
+    "cloudflare:sync-d1": "node scripts/cloudflare-resources.mjs sync-d1",
+    "cloudflare:provision": "node scripts/cloudflare-resources.mjs provision",
+    "db:studio": "npm run db:studio --workspace @inboxplease/api",
+    "db:studio:check": "npm run db:studio:check --workspace @inboxplease/api",
+    "dev:api": "npm run dev --workspace @inboxplease/api",
+    "dev:dashboard": "npm run dev --workspace @inboxplease/dashboard",
+    "deploy:api": "npm run deploy --workspace @inboxplease/api",
+    "deploy:dashboard": "npm run deploy --workspace @inboxplease/dashboard"
+  },
+  "engines": { "node": ">=20.19" }
+}

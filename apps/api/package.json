@@ -1,0 +1,47 @@
+{
+  "name": "@inboxplease/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./app": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "node scripts/validate-production-config.mjs && node ../../scripts/cloudflare-resources.mjs audit && wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "db:auth:schema:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:studio": "node scripts/studio-local.mjs",
+    "db:studio:check": "node scripts/studio-local.mjs --check",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "node scripts/migrate-remote.mjs"
+  },
+  "dependencies": {
+    "@auth/core": "^0.41.2",
+    "@auth/d1-adapter": "^1.11.2",
+    "@hono/auth-js": "^1.1.1",
+    "@hono/zod-validator": "^0.7.4",
+    "agents": "^0.17.4",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.31",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260719.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.0",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-kit": "^0.31.10",
+    "tldts": "^7.4.8",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.112.0"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

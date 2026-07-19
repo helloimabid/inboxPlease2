@@ -1,0 +1,23 @@
+# Copy to .dev.vars. Keep real secrets out of source control.
+ENVIRONMENT=local
+DEV_MODE=true
+AUTH_SECRET=replace-with-at-least-32-random-bytes
+# Sellers use a login-only Facebook app. Configure this redirect in that app:
+# http://localhost:8787/authjs/callback/facebook
+AUTH_FACEBOOK_ID=replace-with-facebook-app-id
+AUTH_FACEBOOK_SECRET=replace-with-facebook-app-secret
+# Page authorization and webhook signatures use a separate app created with
+# "Engage with customers on Messenger from Meta". Configure this redirect:
+# http://localhost:8787/facebook/callback
+META_APP_ID=replace-with-messenger-app-id
+META_APP_SECRET=replace-with-messenger-app-secret
+# Break-glass only. Leave false for the normal seller experience.
+AUTH_PASSWORD_FALLBACK_ENABLED=false
+META_VERIFY_TOKEN=replace-me
+META_PAGE_ACCESS_TOKEN=
+# Base64-encoded 32-byte AES key. Never expose Page tokens to the browser.
+META_TOKEN_ENCRYPTION_KEY=
+META_PRIMARY_RECEIVER_ID=
+SSLCOMMERZ_STORE_ID=
+SSLCOMMERZ_STORE_PASSWORD=
+PUBLIC_API_BASE_URL=http://localhost:8787

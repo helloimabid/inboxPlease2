@@ -1,0 +1,114 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "inboxplease-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "api.inboxplease2.helloimabid.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "DEV_MODE": "false",
+    "D1_SCHEMA_READY": "true",
+    "DASHBOARD_ORIGIN": "https://inboxplease2.helloimabid.com",
+    "AUTH_PASSWORD_FALLBACK_ENABLED": "false",
+    "AUTH_FACEBOOK_ID": "3181155765416402",
+    "AUTH_ISSUER": "inboxplease",
+    "AUTH_AUDIENCE": "inboxplease-dashboard",
+    "AI_ENABLED": "true",
+    "AI_GATEWAY_ID": "default",
+    "DEFAULT_AI_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
+    "FRONTIER_AI_MODEL": "anthropic/claude-haiku-4.5",
+    "VISION_AI_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "WHISPER_AI_MODEL": "@cf/openai/whisper-large-v3-turbo",
+    "EMBEDDING_AI_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
+    "VECTOR_SEARCH_ENABLED": "false",
+    "VECTOR_COSINE_THRESHOLD": "0.55",
+    "MESSAGING_ENABLED": "true",
+    "META_GRAPH_VERSION": "v21.0",
+    "META_APP_ID": "27261504946883020",
+    "HANDOFF_ON_COMPLAINT": "false",
+    "PROACTIVE_ORDER_UPDATES_ENABLED": "false",
+    "PAYMENTS_ENABLED": "false",
+    "PUBLIC_API_BASE_URL": "https://api.inboxplease2.helloimabid.com",
+    "SSLCOMMERZ_INIT_URL": "https://sandbox.sslcommerz.com/gwprocess/v4/api.php",
+    "SSLCOMMERZ_VALIDATION_URL": "https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "inboxplease",
+      "database_id": "fa38c057-e3bf-4e6c-bd59-e4a3f551b86d",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CUSTOMER_THREADS",
+        "class_name": "CustomerThreadDO"
+      },
+      {
+        "name": "STORE_PAGES",
+        "class_name": "StorePageDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "CustomerThreadDO",
+        "StorePageDO"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS",
+        "queue": "inboxplease-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "inboxplease-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "inboxplease-jobs-dead-letter"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "inboxplease-media"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "VECTORIZE_CATALOG",
+      "index_name": "inboxplease-catalog"
+    }
+  ]
+}
