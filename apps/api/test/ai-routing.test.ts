@@ -105,12 +105,46 @@ describe('AI routing', () => {
     expect(calls[0]?.input.messages).toEqual([
       { role: 'user', content: 'I need a refund' },
     ]);
-    expect(calls[0]?.options).toMatchObject({
-      gateway: {
-        id: 'default',
-        metadata: { merchant_id: 'm1', thread_id: 't1' },
+    expect(calls[0]?.options).toBeUndefined();
+  });
+
+  it('omits gateway options when no AI gateway is configured', async () => {
+    const calls: Array<{
+      model: string;
+      input: Record<string, unknown>;
+      options: Record<string, unknown> | undefined;
+    }> = [];
+    const env = {
+      AI_ENABLED: 'true',
+      DEFAULT_AI_MODEL: '@cf/qwen/qwen3-30b-a3b-fp8',
+      AI: {
+        run: async (
+          model: string,
+          input: Record<string, unknown>,
+          options?: Record<string, unknown>,
+        ) => {
+          calls.push({ model, input, options });
+          return { choices: [{ message: { role: 'assistant', content: 'Resolved' } }] };
+        },
+      },
+    } as unknown as Bindings;
+    const reply = await generateReply(env, {
+      messages: [{ role: 'user', content: 'Hello' }],
+      routing: {
+        complaintDetected: false,
+        cartValueMinor: 0,
+        consecutiveLowConfidenceReplies: 0,
+      },
+      language: 'en',
+      merchantId: 'm1',
+      threadId: 't1',
+      commerce: {
+        settings: { assistantName: 'Shop Helper', tone: 'concise' },
+        catalog: [],
       },
     });
+    expect(reply.text).toBe('Resolved');
+    expect(calls[0]?.options).toBeUndefined();
   });
 
   it('serializes merchant settings and bounded catalog facts as data', () => {

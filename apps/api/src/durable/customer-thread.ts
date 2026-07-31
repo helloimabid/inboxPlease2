@@ -523,7 +523,7 @@ export class CustomerThreadDO extends DurableObject<Bindings> {
       this.ctx.storage.sql.exec(
         `INSERT INTO messages (external_id, role, content, model)
          VALUES (?1, 'assistant', ?2, ?3)
-         ON CONFLICT(external_id) DO UPDATE SET
+         ON CONFLICT DO UPDATE SET
            content = excluded.content, model = excluded.model`,
         `${input.eventId}:assistant`,
         reply.text,

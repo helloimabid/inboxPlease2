@@ -169,17 +169,15 @@ export async function generateReply(
     },
     ...input.messages,
   ];
-  // Cloudflare auto-creates the authenticated `default` gateway on first use.
-  // Custom gateway IDs must be provisioned separately before a Worker can use
-  // them, so defaulting to an application-specific name makes inference fail
-  // with AiGatewayError 2001 on a fresh account.
-  const gatewayId = env.AI_GATEWAY_ID?.trim() || 'default';
-  const options = {
-    gateway: {
-      id: gatewayId,
-      metadata: { merchant_id: input.merchantId, thread_id: input.threadId },
-    },
-  };
+  const gatewayId = env.AI_GATEWAY_ID?.trim();
+  const options = gatewayId
+    ? {
+        gateway: {
+          id: gatewayId,
+          metadata: { merchant_id: input.merchantId, thread_id: input.threadId },
+        },
+      }
+    : undefined;
   const result = escalated
     ? await aiBinding(env).run(model, {
         system: messages[0]?.content ?? '',
