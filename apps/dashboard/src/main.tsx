@@ -4,6 +4,7 @@ import App from './App';
 import { getSessionToken } from './api';
 import AuthPage from './marketing/AuthPage';
 import LandingPage from './marketing/LandingPage';
+import PrivacyPolicy from './PrivacyPolicy';
 import './styles.css';
 import './dashboard-theme.css';
 
@@ -19,6 +20,7 @@ function Site() {
   const hasSession = Boolean(getSessionToken());
   if (path === '/signin') return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signin" />;
   if (path === '/signup') return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signup" />;
+  if (path === '/privacy') return <PrivacyPolicy />;
   // Auth.js sessions are HttpOnly cookies and cannot be detected here. The
   // dashboard request itself performs the authoritative bearer-or-cookie check.
   if (path === '/app') return <App />;

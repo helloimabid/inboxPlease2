@@ -175,6 +175,14 @@ button:disabled {
   box-shadow: 0 6px 14px rgba(101, 89, 223, .22);
 }
 
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: inline-block;
+}
+
 .brand-mark > span {
   position: absolute;
   right: 7px;
@@ -378,6 +386,18 @@ button:disabled {
 
 .profile-chip:hover {
   background: #f7f7fa;
+}
+
+.privacy-link {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.privacy-link:hover {
+  color: var(--violet);
 }
 
 .profile-chip strong,

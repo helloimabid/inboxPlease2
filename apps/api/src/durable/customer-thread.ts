@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  detectCheckoutIntent,
   detectComplaint,
   detectPreferredLanguage,
   findSimilarProducts,
@@ -501,6 +502,7 @@ export class CustomerThreadDO extends DurableObject<Bindings> {
       }
 
       const complaint = detectComplaint(content);
+      const checkoutIntent = detectCheckoutIntent(content);
       const [catalog, settings] = await Promise.all([
         this.catalog(input),
         this.settings(input),
@@ -509,6 +511,7 @@ export class CustomerThreadDO extends DurableObject<Bindings> {
         messages: this.recentMessages(),
         routing: {
           complaintDetected: complaint,
+          checkoutIntentDetected: checkoutIntent,
           cartValueMinor: this.cartValueMinor(),
           consecutiveLowConfidenceReplies: meta.low_confidence_count,
           ...(settings.escalationCartThresholdMinor !== undefined
@@ -517,9 +520,17 @@ export class CustomerThreadDO extends DurableObject<Bindings> {
         },
         language,
         merchantId: input.merchantId,
+        pageId: input.pageId,
         threadId: input.customerPsid,
         commerce: { settings, catalog },
       });
+      if (reply.orderCreated) {
+        // Chat-originated orders go through the exact same createOrderCore
+        // path (and the same catalog.reindex outbox job) as a dashboard-
+        // created order, so stock sync and downstream notifications already
+        // work the same way. This is just a breadcrumb for debugging.
+        console.log('Chat tool created order', input.merchantId, input.customerPsid, reply.orderCreated);
+      }
       this.ctx.storage.sql.exec(
         `INSERT INTO messages (external_id, role, content, model)
          VALUES (?1, 'assistant', ?2, ?3)

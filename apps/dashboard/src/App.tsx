@@ -341,7 +341,11 @@ function Sidebar({ view, onChange, mobileOpen, onClose, data }: {
       <aside ref={sidebarRef} className={cx('sidebar', mobileOpen && 'sidebar-open')} aria-label="Main navigation" aria-hidden={mobileNavigation && !mobileOpen}>
         <div className="brand-row">
           <button className="brand" onClick={() => navigate('overview')} aria-label="InboxPlease home">
-            <span className="brand-mark"><MessageCircle size={20} strokeWidth={2.6} /><span /></span>
+            <span className="brand-mark">
+              <img src="/logo.svg" alt="InboxPlease logo" className="brand-logo" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              <MessageCircle size={20} strokeWidth={2.6} />
+              <span />
+            </span>
             <span>Inbox<span>Please</span></span>
           </button>
           <button className="icon-button sidebar-close" onClick={onClose} aria-label="Close menu"><X size={19} /></button>
@@ -385,6 +389,7 @@ function Sidebar({ view, onChange, mobileOpen, onClose, data }: {
             <span><strong>{data.merchant.name}</strong><small>Signed-in account</small></span>
             <LogOut size={16} aria-hidden="true" />
           </button>
+          <a className="privacy-link" href="/privacy" target="_blank" rel="noopener noreferrer">Privacy policy</a>
         </div>
       </aside>
     </>

@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { flag } from '../config';
-import { assertPageOwned, stableEventId, type OrderRow, type ProductRow } from '../db';
-import type { AppEnv, CatalogQueueJob, OrderStatusQueueJob } from '../env';
+import { stableEventId, type OrderRow } from '../db';
+import type { AppEnv, OrderStatusQueueJob } from '../env';
 import { ApiError, jsonOk } from '../errors';
 import { dispatchOutboxAfterCommit, prepareOutboxInsert } from '../outbox';
 import {
@@ -12,9 +12,9 @@ import {
   updateOrderStatusSchema,
 } from '../schemas';
 import { createSslCommerzCheckout } from '../integrations/sslcommerz';
-import { sha256Name } from '../security';
 import { validationHook } from '../validation';
 import { ORDER_MUTATION_ROLES, requireRole } from '../auth';
+import { createOrderCore, OrderCreationError, orderJson } from '../orders-core';
 
 const transitions: Record<string, readonly string[]> = {
   pending: ['confirmed', 'cancelled'],
@@ -38,57 +38,11 @@ export function didOrderTransitionCommit(
   return reportedChanges === 1 || observedStatus === expectedStatus;
 }
 
-interface OrderRequestInput {
-  pageId: string;
-  customerPsid: string;
-  currency: string;
-  items: Array<{ productId: string; quantity: number }>;
-  shippingAddress: Record<string, unknown>;
-}
-
-type OrderWithFingerprint = OrderRow & { request_fingerprint: string | null };
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => (
-    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
-  )).join(',')}}`;
-}
-
-export async function orderRequestFingerprint(input: OrderRequestInput): Promise<string> {
-  const quantities = new Map<string, number>();
-  for (const item of input.items) {
-    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
-  }
-  const normalized = {
-    pageId: input.pageId,
-    customerPsid: input.customerPsid,
-    currency: input.currency,
-    items: [...quantities.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([productId, quantity]) => ({ productId, quantity })),
-    shippingAddress: input.shippingAddress,
-  };
-  return sha256Name(['order-request-v1', canonicalJson(normalized)]);
-}
-
-function orderJson(row: OrderRow) {
-  return {
-    id: row.id,
-    pageId: row.page_id,
-    customerPsid: row.customer_psid,
-    status: row.status,
-    paymentStatus: row.payment_status,
-    paymentTransactionId: row.payment_transaction_id,
-    totalMinor: row.total_minor,
-    currency: row.currency,
-    shippingAddress: JSON.parse(row.shipping_address_json) as unknown,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
+// Re-exported so existing callers/tests that import the fingerprint helper
+// from this route module keep working; the implementation now lives in
+// orders-core.ts alongside createOrderCore so both this route and the chat
+// tool-calling path hash requests identically.
+export { orderRequestFingerprint } from '../orders-core';
 
 export const ordersRoutes = new Hono<AppEnv>()
   .get('/', zValidator('query', orderQuerySchema, validationHook), async (c) => {
@@ -142,134 +96,33 @@ export const ordersRoutes = new Hono<AppEnv>()
         'Idempotency-Key must be 8-128 URL-safe characters',
       );
     }
-    const requestFingerprint = await orderRequestFingerprint(input);
-
-    const existing = await c.env.DB.prepare(
-      'SELECT * FROM orders WHERE merchant_id = ?1 AND idempotency_key = ?2',
-    ).bind(merchantId, idempotencyKey).first<OrderWithFingerprint>();
-    if (existing) {
-      if (existing.request_fingerprint !== requestFingerprint) {
-        throw new ApiError(
-          409,
-          'IDEMPOTENCY_KEY_REUSED',
-          'Idempotency-Key was already used for a different order request',
-        );
-      }
-      return jsonOk(c, orderJson(existing));
-    }
-
-    await assertPageOwned(c.env.DB, merchantId, input.pageId);
-
-    const quantities = new Map<string, number>();
-    for (const item of input.items) {
-      quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
-    }
-    const productIds = [...quantities.keys()];
-    const products = await Promise.all(productIds.map((id) => c.env.DB.prepare(
-      `SELECT id, merchant_id, page_id, sku, name, description, price_minor,
-              currency, stock, status, created_at, updated_at
-       FROM products WHERE id = ?1 AND merchant_id = ?2`,
-    ).bind(id, merchantId).first<ProductRow>()));
-    if (products.some((product) => !product)) {
-      throw new ApiError(422, 'INVALID_ORDER_ITEM', 'One or more products do not exist');
-    }
-    const verified = products as ProductRow[];
-    let totalMinor = 0;
-    for (const product of verified) {
-      const quantity = quantities.get(product.id) ?? 0;
-      if (product.page_id !== input.pageId || product.status !== 'active') {
-        throw new ApiError(422, 'INVALID_ORDER_ITEM', `Product ${product.id} is unavailable`);
-      }
-      if (product.currency !== input.currency) {
-        throw new ApiError(422, 'CURRENCY_MISMATCH', 'All order items must use the order currency');
-      }
-      if (product.stock < quantity) {
-        throw new ApiError(409, 'INSUFFICIENT_STOCK', `Insufficient stock for ${product.name}`);
-      }
-      totalMinor += product.price_minor * quantity;
-      if (!Number.isSafeInteger(totalMinor)) {
-        throw new ApiError(422, 'AMOUNT_TOO_LARGE', 'Order total exceeds the supported range');
-      }
-    }
-
-    const orderId = crypto.randomUUID();
-    const catalogJobs = await Promise.all(verified.map(async (product): Promise<CatalogQueueJob> => ({
-      type: 'catalog.reindex',
-      eventId: await stableEventId(['order-stock', merchantId, orderId, product.id]),
-      merchantId,
-      pageId: input.pageId,
-      productId: product.id,
-      operation: 'upsert',
-    })));
-    const statements: D1PreparedStatement[] = [
-      c.env.DB.prepare(
-        `INSERT INTO orders
-           (id, merchant_id, page_id, customer_psid, total_minor, currency,
-            shipping_address_json, idempotency_key, request_fingerprint)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
-      ).bind(
-        orderId, merchantId, input.pageId, input.customerPsid,
-        totalMinor, input.currency, JSON.stringify(input.shippingAddress), idempotencyKey,
-        requestFingerprint,
-      ),
-    ];
-    for (const [index, product] of verified.entries()) {
-      const quantity = quantities.get(product.id) ?? 0;
-      const catalogJob = catalogJobs[index];
-      if (!catalogJob) throw new Error('Missing catalog stock job');
-      statements.push(
-        c.env.DB.prepare(
-          `INSERT INTO order_items
-             (order_id, product_id, name_snapshot, unit_price_minor, quantity)
-           VALUES (?1, ?2, ?3, ?4, ?5)`,
-        ).bind(orderId, product.id, product.name, product.price_minor, quantity),
-        // The stock CHECK constraint makes the entire D1 batch roll back if it would go negative.
-        c.env.DB.prepare(
-          'UPDATE products SET stock = stock - ?3, updated_at = unixepoch() WHERE id = ?1 AND merchant_id = ?2',
-        ).bind(product.id, merchantId, quantity),
-        prepareOutboxInsert(c.env.DB, catalogJob),
-      );
-    }
+    let created: boolean;
+    let order: OrderRow;
     try {
-      await c.env.DB.batch(statements);
+      const result = await createOrderCore(c.env, {
+        merchantId,
+        pageId: input.pageId,
+        customerPsid: input.customerPsid,
+        currency: input.currency,
+        items: input.items,
+        shippingAddress: input.shippingAddress,
+        idempotencyKey,
+      });
+      created = result.created;
+      order = result.order;
     } catch (error) {
-      if (String(error).toLowerCase().includes('order item changed')) {
-        throw new ApiError(
-          409,
-          'ORDER_ITEM_CHANGED',
-          'A product changed while the order was created; review the cart and retry',
-        );
-      }
-      if (String(error).includes('CHECK')) {
-        throw new ApiError(409, 'INSUFFICIENT_STOCK', 'Stock changed while the order was created');
-      }
-      // A concurrent retry can win the unique idempotency-key race. The losing
-      // D1 batch is rolled back, including its stock updates, so return the winner.
-      if (String(error).includes('UNIQUE')) {
-        const winner = await c.env.DB.prepare(
-          'SELECT * FROM orders WHERE merchant_id = ?1 AND idempotency_key = ?2',
-        ).bind(merchantId, idempotencyKey).first<OrderWithFingerprint>();
-        if (winner) {
-          if (winner.request_fingerprint !== requestFingerprint) {
-            throw new ApiError(
-              409,
-              'IDEMPOTENCY_KEY_REUSED',
-              'Idempotency-Key was already used for a different order request',
-            );
-          }
-          return jsonOk(c, orderJson(winner));
-        }
+      if (error instanceof OrderCreationError) {
+        const status = error.code === 'INSUFFICIENT_STOCK' || error.code === 'ORDER_ITEM_CHANGED'
+          || error.code === 'IDEMPOTENCY_KEY_REUSED'
+          ? 409
+          : error.code === 'INVALID_IDEMPOTENCY_KEY'
+            ? 400
+            : 422;
+        throw new ApiError(status, error.code, error.message);
       }
       throw error;
     }
-    c.executionCtx.waitUntil(Promise.all(
-      catalogJobs.map((job) => dispatchOutboxAfterCommit(c.env, job.eventId)),
-    ).then(() => undefined));
-    const order = await c.env.DB.prepare(
-      'SELECT * FROM orders WHERE id = ?1 AND merchant_id = ?2',
-    ).bind(orderId, merchantId).first<OrderRow>();
-    if (!order) throw new Error('Created order could not be read');
-    return jsonOk(c, orderJson(order), 201);
+    return jsonOk(c, orderJson(order), created ? 201 : 200);
   })
   .post('/:orderId/checkout', requireRole(...ORDER_MUTATION_ROLES), zValidator('json', checkoutCustomerSchema, validationHook), async (c) => {
     if (!flag(c.env.PAYMENTS_ENABLED)) {
