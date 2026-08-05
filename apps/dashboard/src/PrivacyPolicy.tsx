@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function PrivacyPolicy() {
   return (
     <main className="page-content" style={{ paddingTop: 40 }}>
