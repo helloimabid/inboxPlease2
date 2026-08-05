@@ -390,6 +390,8 @@ function Sidebar({ view, onChange, mobileOpen, onClose, data }: {
             <LogOut size={16} aria-hidden="true" />
           </button>
           <a className="privacy-link" href="/privacy" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+          <a className="privacy-link" href="/data-deletion" target="_blank" rel="noopener noreferrer">Request data deletion</a>
+          <a className="privacy-link" href="/reviewer-instructions" target="_blank" rel="noopener noreferrer">Reviewer instructions</a>
         </div>
       </aside>
     </>

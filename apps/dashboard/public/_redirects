@@ -1,1 +1,2 @@
-/* /index.html 200
+# Removed SPA wildcard rewrite to ensure static assets under /assets are served with correct MIME types
+
