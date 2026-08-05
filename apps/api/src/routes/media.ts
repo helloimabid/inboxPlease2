@@ -134,6 +134,7 @@ export const mediaRoutes = new Hono<AppEnv>()
     headers.set('Content-Type', asset.content_type);
     headers.set('ETag', object.httpEtag);
     headers.set('Cache-Control', 'private, max-age=3600');
+    headers.set("Cross-Origin-Resource-Policy", "cross-origin");
     return new Response(object.body, { headers });
   })
   .delete('/:assetId', requireRole(...MERCHANT_ADMIN_ROLES), async (c) => {
