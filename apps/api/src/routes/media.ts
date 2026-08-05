@@ -24,6 +24,10 @@ export function detectImageContentType(bytes: Uint8Array): string | null {
 }
 
 export const mediaRoutes = new Hono<AppEnv>()
+  .use('*', async (c, next) => {
+    await next();
+    c.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  })
   .put('/products/:productId', requireRole(...MERCHANT_ADMIN_ROLES), async (c) => {
     const { merchantId } = c.get('auth');
     const productId = c.req.param('productId');
