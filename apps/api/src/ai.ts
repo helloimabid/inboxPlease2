@@ -1,5 +1,6 @@
 import { flag, numberSetting } from './config';
 import type { Bindings } from './env';
+import { runWithTools } from '@cloudflare/ai-utils';
 import { base64Encode, sha256Name } from './security';
 import { createOrderCore, getOrderStatusForCustomer, OrderCreationError } from './orders-core';
 
@@ -69,11 +70,15 @@ export function filterCosineMatches<T extends { score: number }>(
 }
 
 interface FlexibleAiBinding {
-  run(model: string, input: unknown, options?: unknown): Promise<unknown>;
+  run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
 }
 
-function aiBinding(env: Bindings): FlexibleAiBinding {
-  return env.AI as unknown as FlexibleAiBinding;
+function aiBinding(env: Bindings, gatewayOptions?: unknown): FlexibleAiBinding {
+  return {
+    run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>) {
+      return env.AI.run(model, input, gatewayOptions ?? options);
+    },
+  };
 }
 
 function formatMinorAmount(amountMinor: number): string {
@@ -99,13 +104,13 @@ function orderConfirmationReply(
 }
 
 async function fallbackReply(
-  env: Bindings,
+  ai: FlexibleAiBinding,
   messages: ReplyInput['messages'],
   language: ReplyInput['language'],
 ): Promise<{ text: string; model: string; escalated: false; lowConfidence: true }> {
-  const fallbackModel = env.DEFAULT_AI_MODEL ?? '@cf/qwen/qwen3-30b-a3b-fp8';
+  const fallbackModel = '@cf/qwen/qwen3-30b-a3b-fp8';
   try {
-    const result = await aiBinding(env).run(fallbackModel, { messages, max_tokens: 512 });
+    const result = await ai.run(fallbackModel, { messages, max_tokens: 512 });
     const text = extractModelText(result).trim();
     return {
       text: text || temporaryReply(language),
@@ -243,74 +248,6 @@ export function buildCommerceSystemPrompt(input: ReplyInput): string {
 }
 
 // --- Order tools -----------------------------------------------------------
-//
-// Anthropic Messages API tool format. Only wired into the escalated (Claude
-// Haiku via AI Gateway) path for now: Workers AI's native function calling
-// is Beta and uses a different wire shape per model, and checkout-shaped
-// conversations already escalate via detectCheckoutIntent, so the cheap Qwen
-// path never needs to carry these.
-const orderTools = [
-  {
-    name: 'create_order',
-    description:
-      'Create a real order once the customer has chosen specific catalog items and '
-      + 'quantities and provided their name, phone number, and delivery address. '
-      + 'Price and stock are re-validated against the live catalog on the server -- '
-      + 'do not pre-check them yourself. Returns the created order or a specific '
-      + 'error (e.g. insufficient stock) to react to.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        items: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              productId: { type: 'string', description: 'Catalog product id from STORE_DATA' },
-              quantity: { type: 'integer', minimum: 1 },
-            },
-            required: ['productId', 'quantity'],
-          },
-          minItems: 1,
-        },
-        customerName: { type: 'string' },
-        customerPhone: { type: 'string' },
-        deliveryAddress: { type: 'string' },
-      },
-      required: ['items', 'customerName', 'customerPhone', 'deliveryAddress'],
-    },
-  },
-  {
-    name: 'check_order_status',
-    description: "Look up the status of one of this customer's existing orders by order ID.",
-    input_schema: {
-      type: 'object',
-      properties: {
-        orderId: { type: 'string' },
-      },
-      required: ['orderId'],
-    },
-  },
-] as const;
-
-interface AnthropicToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-function extractToolUses(result: unknown): AnthropicToolUseBlock[] {
-  if (!result || typeof result !== 'object') return [];
-  const content = (result as { content?: unknown }).content;
-  if (!Array.isArray(content)) return [];
-  return content.filter((block): block is AnthropicToolUseBlock => (
-    Boolean(block) && typeof block === 'object'
-      && (block as Record<string, unknown>).type === 'tool_use'
-      && typeof (block as Record<string, unknown>).id === 'string'
-      && typeof (block as Record<string, unknown>).name === 'string'
-  ));
-}
 
 interface ToolExecContext {
   env: Bindings;
@@ -321,20 +258,21 @@ interface ToolExecContext {
 
 async function executeOrderTool(
   ctx: ToolExecContext,
-  toolUse: AnthropicToolUseBlock,
+  toolName: 'create_order' | 'check_order_status',
+  input: Record<string, unknown>,
 ): Promise<{ resultJson: string; orderCreated?: ReplyResult['orderCreated'] }> {
   if (!ctx.pageId) {
     return { resultJson: JSON.stringify({ error: 'ORDER_TOOLS_UNAVAILABLE', message: 'pageId missing for this thread' }) };
   }
   try {
-    if (toolUse.name === 'create_order') {
-      const input = toolUse.input as {
+    if (toolName === 'create_order') {
+      const createOrderInput = input as {
         items?: Array<{ productId?: unknown; quantity?: unknown }>;
         customerName?: unknown;
         customerPhone?: unknown;
         deliveryAddress?: unknown;
       };
-      const items = (input.items ?? [])
+      const items = (createOrderInput.items ?? [])
         .filter((item): item is { productId: string; quantity: number } => (
           typeof item.productId === 'string' && typeof item.quantity === 'number'
         ));
@@ -356,9 +294,9 @@ async function executeOrderTool(
         customerPsid: ctx.customerPsid,
         items,
         shippingAddress: {
-          name: typeof input.customerName === 'string' ? input.customerName : '',
-          phone: typeof input.customerPhone === 'string' ? input.customerPhone : '',
-          address: typeof input.deliveryAddress === 'string' ? input.deliveryAddress : '',
+          name: typeof createOrderInput.customerName === 'string' ? createOrderInput.customerName : '',
+          phone: typeof createOrderInput.customerPhone === 'string' ? createOrderInput.customerPhone : '',
+          address: typeof createOrderInput.deliveryAddress === 'string' ? createOrderInput.deliveryAddress : '',
         },
         idempotencyKey,
       });
@@ -376,8 +314,8 @@ async function executeOrderTool(
           : undefined,
       };
     }
-    if (toolUse.name === 'check_order_status') {
-      const orderId = (toolUse.input as { orderId?: unknown }).orderId;
+    if (toolName === 'check_order_status') {
+      const orderId = (input as { orderId?: unknown }).orderId;
       if (typeof orderId !== 'string') {
         return { resultJson: JSON.stringify({ error: 'INVALID_ORDER_ID' }) };
       }
@@ -400,7 +338,7 @@ async function executeOrderTool(
     if (error instanceof OrderCreationError) {
       return { resultJson: JSON.stringify({ ok: false, error: error.code, message: error.message }) };
     }
-    console.error('Order tool execution failed', toolUse.name, error);
+    console.error('Order tool execution failed', toolName, error);
     return { resultJson: JSON.stringify({ ok: false, error: 'INTERNAL_ERROR' }) };
   }
 }
@@ -410,9 +348,7 @@ export async function generateReply(
   input: ReplyInput,
 ): Promise<ReplyResult> {
   const escalated = shouldEscalateToFrontier(input.routing);
-  const model = escalated
-    ? env.FRONTIER_AI_MODEL ?? 'anthropic/claude-haiku-4.5'
-    : env.DEFAULT_AI_MODEL ?? '@cf/qwen/qwen3-30b-a3b-fp8';
+  const model = env.DEFAULT_AI_MODEL ?? '@cf/qwen/qwen3-30b-a3b-fp8';
 
   if (!flag(env.AI_ENABLED)) {
     return {
@@ -425,15 +361,8 @@ export async function generateReply(
     };
   }
 
-  const messages = [
-    {
-      role: 'system' as const,
-      content: buildCommerceSystemPrompt(input),
-    },
-    ...input.messages,
-  ];
   const gatewayId = env.AI_GATEWAY_ID?.trim();
-  const options = gatewayId
+  const gatewayOptions = gatewayId
     ? {
         gateway: {
           id: gatewayId,
@@ -441,10 +370,76 @@ export async function generateReply(
         },
       }
     : undefined;
+  const ai = aiBinding(env, gatewayOptions);
+  const messages = [
+    {
+      role: 'system' as const,
+      content: buildCommerceSystemPrompt(input),
+    },
+    ...input.messages,
+  ];
+  const useOrderTools = input.routing.checkoutIntentDetected ?? false;
+  const toolCtx: ToolExecContext = {
+    env,
+    merchantId: input.merchantId,
+    pageId: input.pageId,
+    customerPsid: input.threadId,
+  };
+  let orderCreated: ReplyResult['orderCreated'];
+  const orderTools = useOrderTools
+    ? [
+        {
+          name: 'create_order',
+          description:
+            'Create a real order once the customer has chosen specific catalog items and quantities and provided their name, phone number, and delivery address. Price and stock are re-validated against the live catalog on the server. Returns the created order or a specific error (e.g. insufficient stock) to react to.',
+          parameters: {
+            type: 'object',
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    productId: { type: 'string', description: 'Catalog product id from STORE_DATA' },
+                    quantity: { type: 'integer', minimum: 1 },
+                  },
+                  required: ['productId', 'quantity'],
+                },
+                minItems: 1,
+              },
+              customerName: { type: 'string' },
+              customerPhone: { type: 'string' },
+              deliveryAddress: { type: 'string' },
+            },
+            required: ['items', 'customerName', 'customerPhone', 'deliveryAddress'],
+          },
+          function: async (args: Record<string, unknown>) => {
+            const { resultJson, orderCreated: created } = await executeOrderTool(toolCtx, 'create_order', args);
+            if (created) orderCreated = created;
+            return resultJson;
+          },
+        },
+        {
+          name: 'check_order_status',
+          description: "Look up the status of one of this customer's existing orders by order ID.",
+          parameters: {
+            type: 'object',
+            properties: {
+              orderId: { type: 'string' },
+            },
+            required: ['orderId'],
+          },
+          function: async (args: Record<string, unknown>) => {
+            const { resultJson } = await executeOrderTool(toolCtx, 'check_order_status', args);
+            return resultJson;
+          },
+        },
+      ]
+    : [];
 
-  if (!escalated) {
+  if (!useOrderTools) {
     try {
-      const result = await aiBinding(env).run(model, { messages, max_tokens: 512 }, options);
+      const result = await ai.run(model, { messages, max_tokens: 512 });
       const text = extractModelText(result).trim();
       const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
       return {
@@ -455,74 +450,38 @@ export async function generateReply(
       };
     } catch (error) {
       console.error('AI non-escalated call failed', error);
-      return await fallbackReply(env, messages, input.language);
+      return await fallbackReply(ai, messages, input.language);
     }
   }
 
-  const anthropicMessages: Array<Record<string, unknown>> = [...messages.slice(1)];
-  let firstResult: unknown;
   try {
-    firstResult = await aiBinding(env).run(model, {
-      system: messages[0]?.content ?? '',
-      messages: anthropicMessages,
-      max_tokens: 512,
+    const result = await runWithTools(ai as unknown as Parameters<typeof runWithTools>[0], model, {
+      messages,
       tools: orderTools,
-    }, options);
-  } catch (error) {
-    console.error('AI escalated first call failed', error);
-    return await fallbackReply(env, messages, input.language);
-  }
-
-  const toolUses = extractToolUses(firstResult);
-  if (toolUses.length === 0) {
-    const text = extractModelText(firstResult).trim();
+    }, {
+      maxRecursiveToolRuns: 1,
+      strictValidation: true,
+    });
+    const text = extractModelText(result).trim();
     const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
+    if (!text && orderCreated) {
+      return {
+        text: orderConfirmationReply(input.language, orderCreated),
+        model,
+        escalated,
+        lowConfidence: false,
+        orderCreated,
+      };
+    }
     return {
       text: text || 'I need a little more information to answer that accurately.',
       model,
       escalated,
       lowConfidence,
+      orderCreated,
     };
-  }
-
-  // Bounded to a single tool round-trip: execute whatever tools the model
-  // asked for, feed the results back once, and use whatever text comes out
-  // of that second call. This intentionally does not loop -- a runaway
-  // tool-call loop against a payment-adjacent action is worse than a reply
-  // that occasionally needs a follow-up message.
-  const toolCtx: ToolExecContext = {
-    env,
-    merchantId: input.merchantId,
-    pageId: input.pageId,
-    customerPsid: input.threadId,
-  };
-  let orderCreated: ReplyResult['orderCreated'];
-  const toolResultBlocks: Array<Record<string, unknown>> = [];
-  for (const toolUse of toolUses) {
-    const { resultJson, orderCreated: created } = await executeOrderTool(toolCtx, toolUse);
-    if (created) orderCreated = created;
-    toolResultBlocks.push({
-      type: 'tool_result',
-      tool_use_id: toolUse.id,
-      content: resultJson,
-    });
-  }
-
-  const followUpMessages = [
-    ...anthropicMessages,
-    { role: 'assistant', content: (firstResult as { content?: unknown }).content ?? [] },
-    { role: 'user', content: toolResultBlocks },
-  ];
-  let secondResult: unknown;
-  try {
-    secondResult = await aiBinding(env).run(model, {
-      system: messages[0]?.content ?? '',
-      messages: followUpMessages,
-      max_tokens: 512,
-      tools: orderTools,
-    }, options);
   } catch (error) {
-    console.error('AI escalated follow-up call failed', error);
+    console.error('AI tool call failed', error);
     if (orderCreated) {
       return {
         text: orderConfirmationReply(input.language, orderCreated),
@@ -532,22 +491,13 @@ export async function generateReply(
         orderCreated,
       };
     }
-    const fallback = await fallbackReply(env, messages, input.language);
+    const fallback = await fallbackReply(ai, messages, input.language);
     return {
       ...fallback,
       escalated,
       orderCreated,
     };
   }
-  const text = extractModelText(secondResult).trim();
-  const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
-  return {
-    text: text || 'I need a little more information to answer that accurately.',
-    model,
-    escalated,
-    lowConfidence,
-    orderCreated,
-  };
 }
 
 export async function transcribeVoiceNote(

@@ -23,6 +23,7 @@
   "dependencies": {
     "@auth/core": "^0.41.2",
     "@auth/d1-adapter": "^1.11.2",
+    "@cloudflare/ai-utils": "^1.0.1",
     "@hono/auth-js": "^1.1.1",
     "@hono/zod-validator": "^0.7.4",
     "agents": "^0.17.4",

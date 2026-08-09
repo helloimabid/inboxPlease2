@@ -37,14 +37,11 @@ describe('order tool-calling loop', () => {
         run: async (_model: string, input: Record<string, unknown>) => {
           calls.push(input);
           if (calls.length === 1) {
-            // First call: model decides to place the order.
             return {
-              content: [
+              tool_calls: [
                 {
-                  type: 'tool_use',
-                  id: 'toolu_1',
                   name: 'create_order',
-                  input: {
+                  arguments: {
                     items: [{ productId: 'product-1', quantity: 1 }],
                     customerName: 'Sadman Abid',
                     customerPhone: '01918742161',
@@ -54,7 +51,6 @@ describe('order tool-calling loop', () => {
               ],
             };
           }
-          // Second call: model narrates the *real* tool result back to the customer.
           return { content: [{ type: 'text', text: 'অর্ডার নিশ্চিত হয়েছে!' }] };
         },
       },
@@ -76,7 +72,7 @@ describe('order tool-calling loop', () => {
       },
     });
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(reply.orderCreated).toBeDefined();
     expect(reply.orderCreated?.totalMinor).toBe(200000);
     expect(reply.text).toBe('অর্ডার নিশ্চিত হয়েছে!');
@@ -106,12 +102,10 @@ describe('order tool-calling loop', () => {
           calls.push(input);
           if (calls.length === 1) {
             return {
-              content: [
+              tool_calls: [
                 {
-                  type: 'tool_use',
-                  id: 'toolu_1',
                   name: 'create_order',
-                  input: {
+                  arguments: {
                     items: [{ productId: 'product-1', quantity: 1 }],
                     customerName: 'Sadman Abid',
                     customerPhone: '01918742161',
@@ -167,11 +161,9 @@ describe('order tool-calling loop', () => {
           calls.push(input);
           if (calls.length === 1) {
             return {
-              content: [{
-                type: 'tool_use',
-                id: 'toolu_1',
+              tool_calls: [{
                 name: 'create_order',
-                input: {
+                arguments: {
                   items: [{ productId: 'product-1', quantity: 1 }],
                   customerName: 'Sadman Abid',
                   customerPhone: '01918742161',
