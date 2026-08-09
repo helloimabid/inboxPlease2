@@ -76,6 +76,54 @@ function aiBinding(env: Bindings): FlexibleAiBinding {
   return env.AI as unknown as FlexibleAiBinding;
 }
 
+function formatMinorAmount(amountMinor: number): string {
+  const major = Math.floor(amountMinor / 100);
+  const minor = Math.abs(amountMinor % 100);
+  return `${major}.${minor.toString().padStart(2, '0')}`;
+}
+
+function temporaryReply(language: ReplyInput['language']): string {
+  return language === 'bn'
+    ? 'দুঃখিত — বর্তমানে সাময়িক সমস্যা হচ্ছে; অনুগ্রহ করে পরে আবার চেষ্টা করুন।'
+    : 'Sorry — there was a temporary problem generating a reply; please try again later.';
+}
+
+function orderConfirmationReply(
+  language: ReplyInput['language'],
+  orderCreated: NonNullable<ReplyResult['orderCreated']>,
+): string {
+  const total = `${orderCreated.currency} ${formatMinorAmount(orderCreated.totalMinor)}`;
+  return language === 'bn'
+    ? `আপনার অর্ডারটি তৈরি হয়েছে। অর্ডার নম্বর: ${orderCreated.orderId}. মোট: ${total}.`
+    : `Your order has been created successfully. Order ID: ${orderCreated.orderId}. Total: ${total}.`;
+}
+
+async function fallbackReply(
+  env: Bindings,
+  messages: ReplyInput['messages'],
+  language: ReplyInput['language'],
+): Promise<{ text: string; model: string; escalated: false; lowConfidence: true }> {
+  const fallbackModel = env.DEFAULT_AI_MODEL ?? '@cf/qwen/qwen3-30b-a3b-fp8';
+  try {
+    const result = await aiBinding(env).run(fallbackModel, { messages, max_tokens: 512 });
+    const text = extractModelText(result).trim();
+    return {
+      text: text || temporaryReply(language),
+      model: fallbackModel,
+      escalated: false,
+      lowConfidence: true,
+    };
+  } catch (error) {
+    console.error('AI fallback call failed', error);
+    return {
+      text: temporaryReply(language),
+      model: 'ai-error',
+      escalated: false,
+      lowConfidence: true,
+    };
+  }
+}
+
 export function extractModelText(result: unknown): string {
   if (!result || typeof result !== 'object') return '';
   const record = result as Record<string, unknown>;
@@ -395,24 +443,35 @@ export async function generateReply(
     : undefined;
 
   if (!escalated) {
-    const result = await aiBinding(env).run(model, { messages, max_tokens: 512 }, options);
-    const text = extractModelText(result).trim();
-    const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
-    return {
-      text: text || 'I need a little more information to answer that accurately.',
-      model,
-      escalated,
-      lowConfidence,
-    };
+    try {
+      const result = await aiBinding(env).run(model, { messages, max_tokens: 512 }, options);
+      const text = extractModelText(result).trim();
+      const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
+      return {
+        text: text || 'I need a little more information to answer that accurately.',
+        model,
+        escalated,
+        lowConfidence,
+      };
+    } catch (error) {
+      console.error('AI non-escalated call failed', error);
+      return await fallbackReply(env, messages, input.language);
+    }
   }
 
   const anthropicMessages: Array<Record<string, unknown>> = [...messages.slice(1)];
-  const firstResult = await aiBinding(env).run(model, {
-    system: messages[0]?.content ?? '',
-    messages: anthropicMessages,
-    max_tokens: 512,
-    tools: orderTools,
-  }, options);
+  let firstResult: unknown;
+  try {
+    firstResult = await aiBinding(env).run(model, {
+      system: messages[0]?.content ?? '',
+      messages: anthropicMessages,
+      max_tokens: 512,
+      tools: orderTools,
+    }, options);
+  } catch (error) {
+    console.error('AI escalated first call failed', error);
+    return await fallbackReply(env, messages, input.language);
+  }
 
   const toolUses = extractToolUses(firstResult);
   if (toolUses.length === 0) {
@@ -454,12 +513,32 @@ export async function generateReply(
     { role: 'assistant', content: (firstResult as { content?: unknown }).content ?? [] },
     { role: 'user', content: toolResultBlocks },
   ];
-  const secondResult = await aiBinding(env).run(model, {
-    system: messages[0]?.content ?? '',
-    messages: followUpMessages,
-    max_tokens: 512,
-    tools: orderTools,
-  }, options);
+  let secondResult: unknown;
+  try {
+    secondResult = await aiBinding(env).run(model, {
+      system: messages[0]?.content ?? '',
+      messages: followUpMessages,
+      max_tokens: 512,
+      tools: orderTools,
+    }, options);
+  } catch (error) {
+    console.error('AI escalated follow-up call failed', error);
+    if (orderCreated) {
+      return {
+        text: orderConfirmationReply(input.language, orderCreated),
+        model,
+        escalated,
+        lowConfidence: false,
+        orderCreated,
+      };
+    }
+    const fallback = await fallbackReply(env, messages, input.language);
+    return {
+      ...fallback,
+      escalated,
+      orderCreated,
+    };
+  }
   const text = extractModelText(secondResult).trim();
   const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
   return {

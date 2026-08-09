@@ -93,6 +93,67 @@ describe('order tool-calling loop', () => {
     expect(product?.stock).toBe(999);
   });
 
+  it('returns a deterministic order confirmation when the follow-up model call fails after create_order succeeds', async () => {
+    const sqlite = fixture();
+    const calls: Array<Record<string, unknown>> = [];
+    const env = {
+      AI_ENABLED: 'true',
+      FRONTIER_AI_MODEL: 'anthropic/claude-haiku-4.5',
+      DEFAULT_AI_MODEL: '@cf/qwen/qwen3-30b-a3b-fp8',
+      DB: d1FromSqlite(sqlite),
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          calls.push(input);
+          if (calls.length === 1) {
+            return {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'toolu_1',
+                  name: 'create_order',
+                  input: {
+                    items: [{ productId: 'product-1', quantity: 1 }],
+                    customerName: 'Sadman Abid',
+                    customerPhone: '01918742161',
+                    deliveryAddress: '329/1, Shenpara, Mirpur 10, Dhaka 1216',
+                  },
+                },
+              ],
+            };
+          }
+          throw new Error('follow-up failed');
+        },
+      },
+    } as unknown as Bindings;
+
+    const reply = await generateReply(env, {
+      messages: [{ role: 'user', content: 'hea order korun' }],
+      routing: { complaintDetected: false, checkoutIntentDetected: true, cartValueMinor: 0, consecutiveLowConfidenceReplies: 0 },
+      language: 'banglish',
+      merchantId: 'merchant-1',
+      pageId: 'page-1',
+      threadId: 'customer-1',
+      commerce: {
+        settings: { assistantName: 'CompStudy', tone: 'friendly' },
+        catalog: [{
+          id: 'product-1', sku: 'HP-001', name: 'HeadPhone', description: '',
+          priceMinor: 200000, currency: 'BDT', stock: 1000,
+        }],
+      },
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(reply.orderCreated).toBeDefined();
+    expect(reply.text).toContain('Order ID:');
+    expect(reply.text).toContain('Total: BDT 2000.00');
+
+    const order = await env.DB.prepare(
+      'SELECT * FROM orders WHERE merchant_id = ?1',
+    ).bind('merchant-1').first<{ id: string; total_minor: number; status: string }>();
+    expect(order).not.toBeNull();
+    expect(order?.total_minor).toBe(200000);
+  });
+
   it('surfaces insufficient stock as a tool_result instead of crashing or confirming', async () => {
     const sqlite = fixture();
     sqlite.exec("UPDATE products SET stock = 0 WHERE id = 'product-1'");

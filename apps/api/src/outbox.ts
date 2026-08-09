@@ -141,6 +141,13 @@ export async function dispatchOutboxEvent(env: Bindings, eventId: string): Promi
     return false;
   }
 
+  // Guard against missing or malformed Queue binding in test/dev environments.
+  if (!env.JOBS || typeof (env.JOBS as unknown as { send?: unknown }).send !== 'function') {
+    const error = new TypeError('Queue binding JOBS is not available or missing send()');
+    await releaseForRetry(env, eventId, leaseToken, row.attempts, error);
+    console.error('Outbox enqueue failed (missing JOBS binding)', eventId, job.type, error);
+    return false;
+  }
   try {
     await env.JOBS.send(job);
   } catch (error) {

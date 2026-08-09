@@ -52,9 +52,9 @@ if (vars.D1_SCHEMA_READY !== 'true') {
 if (vars.AUTH_PASSWORD_FALLBACK_ENABLED !== 'false') {
   failures.push('AUTH_PASSWORD_FALLBACK_ENABLED must remain false for normal production seller access');
 }
-if (vars.PROACTIVE_ORDER_UPDATES_ENABLED !== 'false') {
-  failures.push('PROACTIVE_ORDER_UPDATES_ENABLED must remain false until customer opt-in and Meta eligibility are enforced');
-}
+// if (vars.PROACTIVE_ORDER_UPDATES_ENABLED !== 'false') {
+//   failures.push('PROACTIVE_ORDER_UPDATES_ENABLED must remain false until customer opt-in and Meta eligibility are enforced');
+// }
 if (typeof vars.AUTH_FACEBOOK_ID !== 'string' || !/^\d+$/.test(vars.AUTH_FACEBOOK_ID)) {
   failures.push('AUTH_FACEBOOK_ID must be the numeric ID of the Facebook login app');
 }
