@@ -385,7 +385,7 @@ export async function generateReply(
     pageId: input.pageId,
     customerPsid: input.threadId,
   };
-  let orderCreated: ReplyResult['orderCreated'];
+  let capturedOrder: ReplyResult['orderCreated'];
   const orderTools = useOrderTools
     ? [
         {
@@ -415,7 +415,7 @@ export async function generateReply(
           },
           function: async (args: Record<string, unknown>) => {
             const { resultJson, orderCreated: created } = await executeOrderTool(toolCtx, 'create_order', args);
-            if (created) orderCreated = created;
+            if (created) capturedOrder = created;
             return resultJson;
           },
         },
@@ -454,8 +454,9 @@ export async function generateReply(
     }
   }
 
+  let result: unknown;
   try {
-    const result = await runWithTools(ai as unknown as Parameters<typeof runWithTools>[0], model, {
+    result = await runWithTools(ai as unknown as Parameters<typeof runWithTools>[0], model, {
       messages,
       tools: orderTools,
     }, {
@@ -464,13 +465,13 @@ export async function generateReply(
     });
     const text = extractModelText(result).trim();
     const lowConfidence = text.length === 0 || /\b(not sure|uncertain|cannot determine)\b/i.test(text);
-    if (!text && orderCreated) {
+    if (!text && capturedOrder) {
       return {
-        text: orderConfirmationReply(input.language, orderCreated),
+        text: orderConfirmationReply(input.language, capturedOrder),
         model,
         escalated,
         lowConfidence: false,
-        orderCreated,
+        orderCreated: capturedOrder,
       };
     }
     return {
@@ -478,24 +479,24 @@ export async function generateReply(
       model,
       escalated,
       lowConfidence,
-      orderCreated,
+      orderCreated: capturedOrder,
     };
   } catch (error) {
     console.error('AI tool call failed', error);
-    if (orderCreated) {
+    if (capturedOrder) {
       return {
-        text: orderConfirmationReply(input.language, orderCreated),
+        text: orderConfirmationReply(input.language, capturedOrder),
         model,
         escalated,
         lowConfidence: false,
-        orderCreated,
+        orderCreated: capturedOrder,
       };
     }
     const fallback = await fallbackReply(ai, messages, input.language);
     return {
       ...fallback,
       escalated,
-      orderCreated,
+      orderCreated: capturedOrder,
     };
   }
 }
