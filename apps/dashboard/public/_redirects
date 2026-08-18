@@ -1,7 +1,7 @@
 # Keep application routes on the SPA entry point without rewriting static assets.
 /app /index.html 200
-/signin /index.html 200
-/signup /index.html 200
+/signin/* /index.html 200
+/signup/* /index.html 200
 /privacy /index.html 200
 /data-deletion /index.html 200
 /reviewer-instructions /index.html 200
