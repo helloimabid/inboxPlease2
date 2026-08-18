@@ -144,7 +144,27 @@ function DashboardPreview() {
 
 export default function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sessionPresent, setSessionPresent] = useState(false);
   usePageMetadata();
+
+  useEffect(() => {
+    let active = true;
+    fetch('/authjs/session', { credentials: 'include', headers: { Accept: 'application/json' } })
+      .then((response) => response.ok ? response.json() as Promise<unknown> : null)
+      .then((payload) => {
+        if (!active) return;
+        setSessionPresent(Boolean(payload && typeof payload === 'object' && 'user' in payload && payload.user));
+      })
+      .catch(() => {
+        if (active) setSessionPresent(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const accountHref = sessionPresent ? '/app' : '/signin';
+  const accountLabel = sessionPresent ? 'Dashboard' : 'Sign in';
+  const startHref = sessionPresent ? '/app' : '/signup';
+  const startLabel = sessionPresent ? 'Open dashboard' : 'Start with Facebook';
 
   return (
     <div className="marketing-page">
@@ -157,13 +177,13 @@ export default function LandingPage() {
             <a href="#workflow" onClick={() => setMenuOpen(false)}>How it works</a>
             <a href="#pricing" onClick={() => setMenuOpen(false)}>Pricing</a>
             <span className="mobile-nav-actions">
-              <a href="/signin">Sign in</a>
-              <a className="marketing-button dark small" href="/signup">Start with Facebook <ArrowRight size={14} /></a>
+              <a href={accountHref}>{accountLabel}</a>
+              <a className="marketing-button dark small" href={startHref}>{startLabel} <ArrowRight size={14} /></a>
             </span>
           </nav>
           <div className="marketing-nav-actions">
-            <a className="marketing-signin-link" href="/signin">Sign in</a>
-            <a className="marketing-button dark small" href="/signup">Start with Facebook <ArrowRight size={14} /></a>
+            <a className="marketing-signin-link" href={accountHref}>{accountLabel}</a>
+            <a className="marketing-button dark small" href={startHref}>{startLabel} <ArrowRight size={14} /></a>
             <button className="marketing-menu-button" type="button" onClick={() => setMenuOpen((open) => !open)} aria-expanded={menuOpen} aria-controls="marketing-menu" aria-label={menuOpen ? 'Close menu' : 'Open menu'}>
               {menuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
@@ -181,7 +201,7 @@ export default function LandingPage() {
             <h1>Turn Messenger conversations into <span>confirmed orders.</span></h1>
             <p>InboxPlease brings customer chats, catalog-aware AI, human handoff, and order tracking into one calm workspace.</p>
             <div className="landing-hero-actions">
-              <a className="marketing-button dark" href="/signup">Continue with Facebook <ArrowRight size={17} /></a>
+              <a className="marketing-button dark" href={startHref}>{startLabel} <ArrowRight size={17} /></a>
               <a className="marketing-button light" href="#preview"><span className="button-play"><ChevronRight size={15} /></span> See the workspace</a>
             </div>
             <div className="landing-proof" aria-label="Product capabilities">
@@ -258,7 +278,7 @@ export default function LandingPage() {
                 <li><Check size={15} /> Order tracking workflow</li>
                 <li><Check size={15} /> Upgrade when your store is ready</li>
               </ul>
-              <a className="marketing-button dark full" href="/signup">Continue with Facebook <ArrowRight size={16} /></a>
+              <a className="marketing-button dark full" href={startHref}>{startLabel} <ArrowRight size={16} /></a>
               <small>No credit card required to create your workspace.</small>
             </article>
           </div>
@@ -270,7 +290,7 @@ export default function LandingPage() {
             <span><Sparkles size={14} /> Your next order may begin with a message</span>
             <h2>Give every conversation a clear next step.</h2>
             <p>Bring Messenger, product context, and order work into one focused place.</p>
-            <div><a className="marketing-button white" href="/signup">Continue with Facebook <ArrowRight size={16} /></a><a className="marketing-button ghost" href="/signin">Sign in to your workspace</a></div>
+            <div><a className="marketing-button white" href={startHref}>{startLabel} <ArrowRight size={16} /></a><a className="marketing-button ghost" href={accountHref}>{sessionPresent ? 'Open your workspace' : 'Sign in to your workspace'}</a></div>
           </div>
         </section>
       </main>
@@ -278,7 +298,7 @@ export default function LandingPage() {
       <footer className="marketing-footer">
         <div className="marketing-container marketing-footer-main">
           <div><Brand /><p>A calmer operating workspace for Bangladeshi Facebook sellers.</p></div>
-          <nav aria-label="Footer navigation"><div><strong>Product</strong><a href="#features">Features</a><a href="#workflow">How it works</a><a href="#pricing">Pricing</a></div><div><strong>Account</strong><a href="/signup">Start with Facebook</a><a href="/signin">Sign in</a></div></nav>
+          <nav aria-label="Footer navigation"><div><strong>Product</strong><a href="#features">Features</a><a href="#workflow">How it works</a><a href="#pricing">Pricing</a></div><div><strong>Account</strong><a href={startHref}>{startLabel}</a><a href={accountHref}>{accountLabel}</a></div></nav>
         </div>
         <div className="marketing-container marketing-footer-bottom"><span>© {new Date().getFullYear()} InboxPlease.</span><span>Built for conversations that become orders.</span></div>
       </footer>
