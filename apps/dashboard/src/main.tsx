@@ -20,8 +20,12 @@ function Redirect({ to }: { to: '/app' | '/signin' }) {
 function Site() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   const hasSession = Boolean(getSessionToken());
-  if (path === '/signin') return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signin" />;
-  if (path === '/signup') return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signup" />;
+  if (path === '/signin' || path.startsWith('/signin/')) {
+    return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signin" />;
+  }
+  if (path === '/signup' || path.startsWith('/signup/')) {
+    return hasSession ? <Redirect to="/app" /> : <AuthPage mode="signup" />;
+  }
   if (path === '/privacy') return <PrivacyPolicy />;
   if (path === '/data-deletion') return <DataDeletion />;
   if (path === '/reviewer-instructions') return <ReviewerInstructions />;

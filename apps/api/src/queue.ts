@@ -159,18 +159,27 @@ async function processPaymentJob(env: Bindings, job: PaymentQueueJob) {
     );
     return;
   }
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE orders SET payment_status = 'paid', payment_transaction_id = ?3,
-         updated_at = unixepoch()
-       WHERE id = ?1 AND merchant_id = ?2 AND payment_status = 'pending'
-         AND payment_transaction_id = ?3`,
-    ).bind(order.id, order.merchant_id, transactionId),
-    env.DB.prepare(
-      `UPDATE payment_attempts SET status = 'paid', last_error = NULL,
-         updated_at = unixepoch() WHERE transaction_id = ?1 AND order_id = ?2`,
-    ).bind(transactionId, order.id),
+  const transition = await env.DB.batch([
+  env.DB.prepare(
+  `UPDATE orders SET payment_status = 'paid', payment_transaction_id = ?3,
+  updated_at = unixepoch()
+  WHERE id = ?1 AND merchant_id = ?2 AND payment_status = 'pending'
+  AND payment_transaction_id = ?3`,
+  ).bind(order.id, order.merchant_id, transactionId),
+  env.DB.prepare(
+  `UPDATE payment_attempts SET status = 'paid', last_error = NULL,
+  updated_at = unixepoch() WHERE transaction_id = ?1 AND order_id = ?2`,
+  ).bind(transactionId, order.id),
   ]);
+  if ((transition[0]?.meta.changes ?? 0) === 1) {
+    await sendProactiveOrderUpdate(
+      env,
+      order.merchant_id,
+      order.page_id,
+      order.customer_psid,
+      `Payment received for order ${order.id}. Your order is confirmed and we will update you when it ships.`,
+    );
+  }
   await markWebhook(env.DB, 'sslcommerz', job.eventId, 'processed');
 }
 
