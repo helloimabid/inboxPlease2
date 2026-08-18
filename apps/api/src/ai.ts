@@ -458,7 +458,7 @@ export async function generateReply(
   try {
     result = await runWithTools(ai as unknown as Parameters<typeof runWithTools>[0], model, {
       messages,
-      tools: orderTools,
+      tools: orderTools as unknown as NonNullable<Parameters<typeof runWithTools>[2]>['tools'],
     }, {
       maxRecursiveToolRuns: 1,
       strictValidation: true,
