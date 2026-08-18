@@ -28,7 +28,12 @@ export { CustomerThreadDO } from './durable/customer-thread';
 export { StorePageDO } from './durable/store-page';
 
 const app = new Hono<AppEnv>()
-  .use('*', secureHeaders())
+  .use(
+  '*',
+  secureHeaders({
+    crossOriginResourcePolicy: 'cross-origin',
+  })
+)
   .use('*', async (c, next) => {
     const requestId = c.req.header('X-Request-Id')?.slice(0, 128) ?? crypto.randomUUID();
     c.set('requestId', requestId);

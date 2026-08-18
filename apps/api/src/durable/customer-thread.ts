@@ -507,23 +507,42 @@ export class CustomerThreadDO extends DurableObject<Bindings> {
         this.catalog(input),
         this.settings(input),
       ]);
-      const reply = await generateReply(this.env, {
-        messages: this.recentMessages(),
-        routing: {
-          complaintDetected: complaint,
-          checkoutIntentDetected: checkoutIntent,
-          cartValueMinor: this.cartValueMinor(),
-          consecutiveLowConfidenceReplies: meta.low_confidence_count,
-          ...(settings.escalationCartThresholdMinor !== undefined
-            ? { escalationCartThresholdMinor: settings.escalationCartThresholdMinor }
-            : {}),
-        },
-        language,
-        merchantId: input.merchantId,
-        pageId: input.pageId,
-        threadId: input.customerPsid,
-        commerce: { settings, catalog },
-      });
+      let reply: {
+        text: string;
+        model: string;
+        escalated: boolean;
+        lowConfidence: boolean;
+        orderCreated?: { orderId: string; totalMinor: number; currency: string } | undefined;
+      };
+      try {
+        reply = await generateReply(this.env, {
+          messages: this.recentMessages(),
+          routing: {
+            complaintDetected: complaint,
+            checkoutIntentDetected: checkoutIntent,
+            cartValueMinor: this.cartValueMinor(),
+            consecutiveLowConfidenceReplies: meta.low_confidence_count,
+            ...(settings.escalationCartThresholdMinor !== undefined
+              ? { escalationCartThresholdMinor: settings.escalationCartThresholdMinor }
+              : {}),
+          },
+          language,
+          merchantId: input.merchantId,
+          pageId: input.pageId,
+          threadId: input.customerPsid,
+          commerce: { settings, catalog },
+        });
+      } catch (error) {
+        console.error('generateReply threw an error; using safe fallback', error);
+        reply = {
+          text: language === 'bn'
+            ? 'দুঃখিত — বর্তমানে সাময়িক সমস্যা হচ্ছে; অনুগ্রহ করে পরে আবার চেষ্টা করুন।'
+            : 'Sorry — there was a temporary problem generating a reply; please try again later.',
+          model: 'ai-error',
+          escalated: false,
+          lowConfidence: true,
+        };
+      }
       if (reply.orderCreated) {
         // Chat-originated orders go through the exact same createOrderCore
         // path (and the same catalog.reindex outbox job) as a dashboard-

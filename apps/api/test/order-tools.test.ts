@@ -37,14 +37,11 @@ describe('order tool-calling loop', () => {
         run: async (_model: string, input: Record<string, unknown>) => {
           calls.push(input);
           if (calls.length === 1) {
-            // First call: model decides to place the order.
             return {
-              content: [
+              tool_calls: [
                 {
-                  type: 'tool_use',
-                  id: 'toolu_1',
                   name: 'create_order',
-                  input: {
+                  arguments: {
                     items: [{ productId: 'product-1', quantity: 1 }],
                     customerName: 'Sadman Abid',
                     customerPhone: '01918742161',
@@ -54,8 +51,71 @@ describe('order tool-calling loop', () => {
               ],
             };
           }
-          // Second call: model narrates the *real* tool result back to the customer.
           return { content: [{ type: 'text', text: 'অর্ডার নিশ্চিত হয়েছে!' }] };
+        },
+      },
+    } as unknown as Bindings;
+
+    const reply = await generateReply(env, {
+      messages: [{ role: 'user', content: 'hea order korun' }],
+      routing: { complaintDetected: false, checkoutIntentDetected: true, cartValueMinor: 0, consecutiveLowConfidenceReplies: 0 },
+      language: 'banglish',
+      merchantId: 'merchant-1',
+      pageId: 'page-1',
+      threadId: 'customer-1',
+      commerce: {
+        settings: { assistantName: 'CompStudy', tone: 'friendly' },
+        catalog: [{
+          id: 'product-1', sku: 'HP-001', name: 'HeadPhone', description: '',
+          priceMinor: 200000, currency: 'BDT', stock: 1000,
+        }],
+      },
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(reply.orderCreated).toBeDefined();
+    expect(reply.orderCreated?.totalMinor).toBe(200000);
+    expect(reply.text).toBe('অর্ডার নিশ্চিত হয়েছে!');
+
+    const order = await env.DB.prepare(
+      'SELECT * FROM orders WHERE merchant_id = ?1',
+    ).bind('merchant-1').first<{ id: string; total_minor: number; status: string }>();
+    expect(order).not.toBeNull();
+    expect(order?.total_minor).toBe(200000);
+
+    const product = await env.DB.prepare(
+      'SELECT stock FROM products WHERE id = ?1',
+    ).bind('product-1').first<{ stock: number }>();
+    expect(product?.stock).toBe(999);
+  });
+
+  it('returns a deterministic order confirmation when the follow-up model call fails after create_order succeeds', async () => {
+    const sqlite = fixture();
+    const calls: Array<Record<string, unknown>> = [];
+    const env = {
+      AI_ENABLED: 'true',
+      FRONTIER_AI_MODEL: 'anthropic/claude-haiku-4.5',
+      DEFAULT_AI_MODEL: '@cf/qwen/qwen3-30b-a3b-fp8',
+      DB: d1FromSqlite(sqlite),
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          calls.push(input);
+          if (calls.length === 1) {
+            return {
+              tool_calls: [
+                {
+                  name: 'create_order',
+                  arguments: {
+                    items: [{ productId: 'product-1', quantity: 1 }],
+                    customerName: 'Sadman Abid',
+                    customerPhone: '01918742161',
+                    deliveryAddress: '329/1, Shenpara, Mirpur 10, Dhaka 1216',
+                  },
+                },
+              ],
+            };
+          }
+          throw new Error('follow-up failed');
         },
       },
     } as unknown as Bindings;
@@ -78,19 +138,14 @@ describe('order tool-calling loop', () => {
 
     expect(calls).toHaveLength(2);
     expect(reply.orderCreated).toBeDefined();
-    expect(reply.orderCreated?.totalMinor).toBe(200000);
-    expect(reply.text).toBe('অর্ডার নিশ্চিত হয়েছে!');
+    expect(reply.text).toContain('Order ID:');
+    expect(reply.text).toContain('Total: BDT 2000.00');
 
     const order = await env.DB.prepare(
       'SELECT * FROM orders WHERE merchant_id = ?1',
     ).bind('merchant-1').first<{ id: string; total_minor: number; status: string }>();
     expect(order).not.toBeNull();
     expect(order?.total_minor).toBe(200000);
-
-    const product = await env.DB.prepare(
-      'SELECT stock FROM products WHERE id = ?1',
-    ).bind('product-1').first<{ stock: number }>();
-    expect(product?.stock).toBe(999);
   });
 
   it('surfaces insufficient stock as a tool_result instead of crashing or confirming', async () => {
@@ -106,11 +161,9 @@ describe('order tool-calling loop', () => {
           calls.push(input);
           if (calls.length === 1) {
             return {
-              content: [{
-                type: 'tool_use',
-                id: 'toolu_1',
+              tool_calls: [{
                 name: 'create_order',
-                input: {
+                arguments: {
                   items: [{ productId: 'product-1', quantity: 1 }],
                   customerName: 'Sadman Abid',
                   customerPhone: '01918742161',

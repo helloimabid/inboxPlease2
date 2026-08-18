@@ -61,7 +61,7 @@ describe('AI routing', () => {
     })).toBe('হ্যালো');
   });
 
-  it('uses Anthropic top-level system instructions on the frontier path', async () => {
+  it('uses inline system instructions on the frontier path', async () => {
     const calls: Array<{
       model: string;
       input: Record<string, unknown>;
@@ -100,9 +100,11 @@ describe('AI routing', () => {
       },
     });
     expect(reply.text).toBe('Resolved');
-    expect(calls[0]?.input.system).toContain('Shop Helper');
-    expect(calls[0]?.input.system).toContain('125000');
     expect(calls[0]?.input.messages).toEqual([
+      {
+        role: 'system',
+        content: expect.stringContaining('Shop Helper'),
+      },
       { role: 'user', content: 'I need a refund' },
     ]);
     expect(calls[0]?.options).toBeUndefined();

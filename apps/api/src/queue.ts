@@ -96,10 +96,10 @@ async function processMetaJob(env: Bindings, job: MetaQueueJob) {
       ]);
       const name = await customerThreadObjectName(page.merchant_id, pageId, customerPsid);
       const stub = env.CUSTOMER_THREADS.get(env.CUSTOMER_THREADS.idFromName(name));
-      const response = await stub.fetch(
-        handoverEvent
-          ? 'https://do.internal/events/handover'
-          : 'https://do.internal/events/meta', {
+      const endpoint = handoverEvent
+        ? 'https://do.internal/events/handover'
+        : 'https://do.internal/events/meta';
+      const response = await stub.fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -109,9 +109,17 @@ async function processMetaJob(env: Bindings, job: MetaQueueJob) {
           customerPsid,
           event,
         }),
-        },
-      );
-      if (!response.ok) throw new Error(`CustomerThreadDO failed: ${response.status}`);
+      });
+      if (!response.ok) {
+        let bodyText = '';
+        try {
+          bodyText = await response.text();
+        } catch (e) {
+          bodyText = `<unreadable: ${String(e)}>`;
+        }
+        console.error('CustomerThreadDO fetch failed', { pageId, eventId, status: response.status, body: bodyText.slice(0, 2000) });
+        throw new Error(`CustomerThreadDO failed: ${response.status} - ${bodyText.slice(0, 2000)}`);
+      }
     }
   }
   await markWebhook(env.DB, 'meta', job.eventId, 'processed');
