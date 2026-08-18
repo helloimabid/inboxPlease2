@@ -1,4 +1,4 @@
-@import url('https://api.fontshare.com/v2/css?f[]=clash-display@400,500&f[]=satoshi@300,400,500,700&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=clash-display@400,500&f[]=satoshi@300,400,500&display=swap');
 
 .marketing-page,
 .auth-page {
@@ -10,10 +10,8 @@
   --mk-indigo-dark: #3730a3;
   --mk-soft: #f8fafc;
   --mk-white: #fff;
-  --mk-font-sans: 'Satoshi', Inter, 'Hind Siliguri', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mk-font-display: 'Clash Display', var(--mk-font-sans);
   color: var(--mk-ink);
-  font-family: var(--mk-font-sans);
+  font-family: 'Satoshi', Inter, 'Hind Siliguri', ui-sans-serif, system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -56,7 +54,7 @@
 }
 
 .marketing-header {
-  position: fixed;
+  position: sticky;
   z-index: 80;
   inset: 0 0 auto;
   border-bottom: 1px solid rgba(226, 232, 240, .8);
@@ -78,10 +76,9 @@
   gap: 10px;
   flex: 0 0 auto;
   color: #172033;
-  font-family: var(--mk-font-display);
   font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -.03em;
+  font-weight: 800;
+  letter-spacing: -.65px;
 }
 
 .marketing-brand > span:last-child > span {
@@ -341,17 +338,17 @@
 
 .landing-hero h1 {
   max-width: 900px;
+  font-family: 'Clash Display', Satoshi, Inter, sans-serif;
   margin: 27px auto 0;
   color: #111827;
-  font-family: var(--mk-font-display);
   font-size: clamp(44px, 6vw, 76px);
-  font-weight: 500;
-  letter-spacing: -.045em;
+  font-weight: 650;
+  letter-spacing: -.065em;
   line-height: .99;
 }
 
 .landing-hero h1 span {
-  background: linear-gradient(115deg, #312e81 5%, #1e293b 55%, #64748b 95%);
+  background: linear-gradient(115deg, #3730a3 5%, #475569 73%, #64748b);
   background-clip: text;
   color: transparent;
 }
@@ -950,11 +947,11 @@
 .landing-section-heading h2,
 .pricing-copy h2 {
   margin: 19px 0 0;
+  font-family: 'Clash Display', Satoshi, Inter, sans-serif;
   color: #172033;
-  font-family: var(--mk-font-display);
   font-size: clamp(34px, 4vw, 50px);
-  font-weight: 500;
-  letter-spacing: -.04em;
+  font-weight: 650;
+  letter-spacing: -.05em;
   line-height: 1.08;
 }
 
@@ -1032,10 +1029,8 @@
 .landing-feature-card h3 {
   margin: 0 0 9px;
   color: #263246;
-  font-family: var(--mk-font-display);
   font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -.02em;
+  letter-spacing: -.025em;
 }
 
 .landing-feature-card p {
@@ -1196,10 +1191,7 @@
 .workflow-grid h3 {
   margin: 20px 0 7px;
   color: #2a3548;
-  font-family: var(--mk-font-display);
   font-size: 14px;
-  font-weight: 500;
-  letter-spacing: -.01em;
 }
 
 .workflow-grid p {
@@ -1307,10 +1299,8 @@
 
 .pricing-amount strong {
   color: #172033;
-  font-family: var(--mk-font-display);
   font-size: 43px;
-  font-weight: 500;
-  letter-spacing: -.03em;
+  letter-spacing: -.055em;
 }
 
 .pricing-amount span {
@@ -1402,10 +1392,9 @@
 .landing-final-cta h2 {
   max-width: 700px;
   margin: 20px auto 0;
-  font-family: var(--mk-font-display);
   font-size: clamp(36px, 5vw, 55px);
-  font-weight: 500;
-  letter-spacing: -.04em;
+  font-weight: 650;
+  letter-spacing: -.055em;
   line-height: 1.05;
 }
 
@@ -1722,10 +1711,9 @@
 .auth-heading h1 {
   margin: 18px 0 0;
   color: #172033;
-  font-family: var(--mk-font-display);
   font-size: 32px;
-  font-weight: 500;
-  letter-spacing: -.03em;
+  font-weight: 650;
+  letter-spacing: -.045em;
 }
 
 .auth-heading > p {
