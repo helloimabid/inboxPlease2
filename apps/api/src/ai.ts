@@ -3,6 +3,7 @@ import type { Bindings } from './env';
 import { runWithTools } from '@cloudflare/ai-utils';
 import { base64Encode, sha256Name } from './security';
 import { createOrderCore, getOrderStatusForCustomer, OrderCreationError } from './orders-core';
+import { createSslCommerzCheckout } from './integrations/sslcommerz';
 
 export const ESCALATION_CART_THRESHOLD_MINOR = 500_000;
 export const DEFAULT_COSINE_THRESHOLD = 0.55;
@@ -242,7 +243,7 @@ export function buildCommerceSystemPrompt(input: ReplyInput): string {
       + 'you are preparing the order, or ask for whatever detail (items, name, phone, '
       + 'delivery address) is still missing. When the customer has clearly chosen items '
       + 'and provided their name, phone, and delivery address, call create_order with '
-      + 'those details instead of writing a text confirmation yourself.',
+      + 'those details instead of writing a text confirmation yourself. Never write a payment URL, example.com URL, fake checkout URL, or claim payment is complete. To offer payment, collect the required customer details and call create_payment_link; only share the exact gatewayPageUrl returned by that tool.',
     `STORE_DATA=${JSON.stringify({ storeDescription, catalog })}`,
   ].join(' ');
 }
@@ -258,7 +259,7 @@ interface ToolExecContext {
 
 async function executeOrderTool(
   ctx: ToolExecContext,
-  toolName: 'create_order' | 'check_order_status',
+  toolName: 'create_order' | 'check_order_status' | 'create_payment_link',
   input: Record<string, unknown>,
 ): Promise<{ resultJson: string; orderCreated?: ReplyResult['orderCreated'] }> {
   if (!ctx.pageId) {
@@ -332,6 +333,62 @@ async function executeOrderTool(
             })
           : JSON.stringify({ ok: false, error: 'ORDER_NOT_FOUND' }),
       };
+    }
+    if (toolName === 'create_payment_link') {
+      const paymentInput = input as {
+        orderId?: unknown; name?: unknown; email?: unknown; phone?: unknown;
+        address?: unknown; city?: unknown; postcode?: unknown;
+      };
+      const orderId = typeof paymentInput.orderId === 'string' ? paymentInput.orderId.trim() : '';
+      if (!orderId || !paymentInput.email || !paymentInput.phone || !paymentInput.address) {
+        return { resultJson: JSON.stringify({ ok: false, error: 'PAYMENT_CUSTOMER_DETAILS_REQUIRED' }) };
+      }
+      const order = await ctx.env.DB.prepare(
+        'SELECT id, total_minor, currency, status, payment_status, payment_transaction_id FROM orders WHERE id = ?1 AND merchant_id = ?2 AND customer_psid = ?3',
+      ).bind(orderId, ctx.merchantId, ctx.customerPsid).first<{
+        id: string; total_minor: number; currency: string; status: string;
+        payment_status: string; payment_transaction_id: string | null;
+      }>();
+      if (!order) return { resultJson: JSON.stringify({ ok: false, error: 'ORDER_NOT_FOUND' }) };
+      if (!['pending', 'confirmed', 'processing'].includes(order.status) || order.payment_status === 'paid') {
+        return { resultJson: JSON.stringify({ ok: false, error: 'ORDER_NOT_PAYABLE' }) };
+      }
+      if (order.payment_transaction_id || order.payment_status === 'pending') {
+        return { resultJson: JSON.stringify({ ok: false, error: 'PAYMENT_ALREADY_PENDING' }) };
+      }
+      const transactionId = `ip-${crypto.randomUUID().replace(/-/g, '').slice(0, 27)}`;
+      const [reserved] = await ctx.env.DB.batch([
+        ctx.env.DB.prepare(
+          `UPDATE orders SET payment_transaction_id = ?3, payment_status = 'pending', updated_at = unixepoch()
+           WHERE id = ?1 AND merchant_id = ?2 AND payment_status IN ('unpaid', 'failed') AND payment_transaction_id IS NULL`,
+        ).bind(orderId, ctx.merchantId, transactionId),
+        ctx.env.DB.prepare(
+          `INSERT INTO payment_attempts (transaction_id, order_id, merchant_id, amount_minor, currency, status)
+           VALUES (?1, ?2, ?3, ?4, ?5, 'initializing')`,
+        ).bind(transactionId, orderId, ctx.merchantId, order.total_minor, order.currency),
+      ]);
+      if ((reserved?.meta.changes ?? 0) !== 1) {
+        return { resultJson: JSON.stringify({ ok: false, error: 'PAYMENT_INTENT_CONFLICT' }) };
+      }
+      try {
+        const session = await createSslCommerzCheckout(ctx.env, {
+          orderId, transactionId, amountMinor: order.total_minor, currency: order.currency,
+        }, {
+          name: typeof paymentInput.name === 'string' ? paymentInput.name : 'Customer',
+          email: String(paymentInput.email), phone: String(paymentInput.phone),
+          address: String(paymentInput.address), city: typeof paymentInput.city === 'string' ? paymentInput.city : 'Dhaka',
+          postcode: typeof paymentInput.postcode === 'string' ? paymentInput.postcode : '1207', country: 'Bangladesh',
+        });
+        await ctx.env.DB.prepare(
+          `UPDATE payment_attempts SET status = 'pending', gateway_session_key = ?2, gateway_page_url = ?3, updated_at = unixepoch() WHERE transaction_id = ?1`,
+        ).bind(transactionId, session.sessionKey, session.gatewayPageUrl).run();
+        return { resultJson: JSON.stringify({ ok: true, orderId, transactionId, gatewayPageUrl: session.gatewayPageUrl }) };
+      } catch (error) {
+        await ctx.env.DB.prepare(
+          `UPDATE payment_attempts SET status = 'unknown', last_error = ?2, updated_at = unixepoch() WHERE transaction_id = ?1`,
+        ).bind(transactionId, String(error).slice(0, 500)).run();
+        return { resultJson: JSON.stringify({ ok: false, error: 'PAYMENT_PROVIDER_ERROR' }) };
+      }
     }
     return { resultJson: JSON.stringify({ error: 'UNKNOWN_TOOL' }) };
   } catch (error) {
@@ -431,6 +488,22 @@ export async function generateReply(
           },
           function: async (args: Record<string, unknown>) => {
             const { resultJson } = await executeOrderTool(toolCtx, 'check_order_status', args);
+            return resultJson;
+          },
+        },
+        {
+          name: 'create_payment_link',
+          description: 'Create a real SSLCommerz payment link for an existing unpaid order. Never invent a URL; only share gatewayPageUrl returned by this tool.',
+          parameters: {
+            type: 'object',
+            properties: {
+              orderId: { type: 'string' }, name: { type: 'string' }, email: { type: 'string' },
+              phone: { type: 'string' }, address: { type: 'string' }, city: { type: 'string' }, postcode: { type: 'string' },
+            },
+            required: ['orderId', 'name', 'email', 'phone', 'address', 'city', 'postcode'],
+          },
+          function: async (args: Record<string, unknown>) => {
+            const { resultJson } = await executeOrderTool(toolCtx, 'create_payment_link', args);
             return resultJson;
           },
         },
@@ -534,15 +607,20 @@ export interface VisionMatch {
   description: string;
 }
 
-function parseVisionResponse(text: string): VisionMatch {
+function parseVisionResponse(text: string, catalog: readonly CatalogVisionItem[]): VisionMatch {
   const candidate = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   try {
     const parsed = JSON.parse(candidate) as Record<string, unknown>;
+    const confidence = typeof parsed.confidence === 'number'
+      ? Math.max(0, Math.min(1, parsed.confidence))
+      : 0;
+    const productId = typeof parsed.productId === 'string' ? parsed.productId : null;
+    const catalogMatch = productId && catalog.some((item) => item.id === productId) ? productId : null;
+    // Never turn a weak visual guess into a catalog fact. The caller can still
+    // show the description and ask the shopper for the product name or SKU.
     return {
-      productId: typeof parsed.productId === 'string' ? parsed.productId : null,
-      confidence: typeof parsed.confidence === 'number'
-        ? Math.max(0, Math.min(1, parsed.confidence))
-        : 0,
+      productId: confidence >= 0.7 ? catalogMatch : null,
+      confidence,
       description: typeof parsed.description === 'string' ? parsed.description : text,
     };
   } catch {
@@ -569,12 +647,13 @@ export async function matchProductFromImage(
     {
       image: base64Encode(image),
       prompt:
-        'Match this image to the catalog. Return only JSON with productId, confidence (0..1), and description. ' +
-        `Use null productId if uncertain. Catalog: ${JSON.stringify(compactCatalog)}`,
+        'Identify the item in this image, then compare it against the catalog. Return only JSON with productId, confidence (0..1), and description. ' +
+        'Use null productId when the image is not clearly the same product, when the catalog has no matching item, or when confidence is below 0.7. Never choose a merely similar product. ' +
+        `Catalog: ${JSON.stringify(compactCatalog)}`,
       max_tokens: 256,
     },
   );
-  return parseVisionResponse(extractModelText(result));
+  return parseVisionResponse(extractModelText(result), catalog);
 }
 
 export async function embedText(env: Bindings, text: string): Promise<number[]> {
