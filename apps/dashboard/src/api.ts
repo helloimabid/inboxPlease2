@@ -4,6 +4,9 @@ import { demoData } from './data';
 import type { DashboardData } from './types';
 
 const API_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
+export const AUTH_URL = API_URL.startsWith('http')
+  ? API_URL.replace(/\/api$/, '')
+  : window.location.origin;
 const RPC_BASE_URL = API_URL.startsWith('http')
   ? API_URL.replace(/\/api$/, '')
   : window.location.origin;

@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { Brand } from './Brand';
 import './marketing.css';
-
+import { AUTH_URL } from '../api';
 interface Feature {
   title: string;
   description: string;
@@ -149,7 +149,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     let active = true;
-    fetch('/authjs/session', { credentials: 'include', headers: { Accept: 'application/json' } })
+    fetch(`${AUTH_URL}/authjs/session`, { credentials: 'include', headers: { Accept: 'application/json' } })
       .then((response) => response.ok ? response.json() as Promise<unknown> : null)
       .then((payload) => {
         if (!active) return;
