@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { assertProductOwned } from '../db';
-import type { AppEnv } from '../env';
+import type { AppEnv, Bindings } from '../env';
 import { ApiError, jsonOk } from '../errors';
 import { BodyTooLargeError, readBodyBounded } from '../bounded-body';
 import { MERCHANT_ADMIN_ROLES, requireRole } from '../auth';
+import { verifyPublicMediaToken } from '../security';
 
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -149,4 +150,32 @@ export const mediaRoutes = new Hono<AppEnv>()
     ).bind(assetId, merchantId).run();
     c.executionCtx.waitUntil(c.env.MEDIA.delete(asset.r2_key));
     return jsonOk(c, { deleted: true });
+  });
+
+/**
+ * Public media endpoint — no auth required. Verifies an HMAC-signed token
+ * so that Messenger (and other external consumers) can fetch product images
+ * without needing an API session.
+ */
+export const publicMediaRoutes = new Hono<{ Bindings: Bindings }>()
+  .get('/:token', async (c) => {
+    const token = c.req.param('token');
+    const secret = c.env.AUTH_SECRET;
+    if (!secret) throw new ApiError(500, 'MISSING_AUTH_SECRET', 'AUTH_SECRET not configured');
+    const verified = await verifyPublicMediaToken(secret, token);
+    if (!verified) throw new ApiError(403, 'INVALID_MEDIA_TOKEN', 'Invalid or expired media token');
+    const { merchantId, assetId } = verified;
+    const asset = await c.env.DB.prepare(
+      `SELECT r2_key, content_type FROM media_assets WHERE id = ?1 AND merchant_id = ?2`,
+    ).bind(assetId, merchantId).first<{ r2_key: string; content_type: string }>();
+    if (!asset) throw new ApiError(404, 'MEDIA_NOT_FOUND', 'Media asset was not found');
+    const object = await c.env.MEDIA.get(asset.r2_key);
+    if (!object || !('body' in object)) throw new ApiError(404, 'MEDIA_NOT_FOUND', 'Media object was not found');
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('Content-Type', asset.content_type);
+    headers.set('ETag', object.httpEtag);
+    headers.set('Cache-Control', 'public, max-age=86400');
+    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    return new Response(object.body, { headers });
   });

@@ -73,3 +73,38 @@ export async function sha256Name(parts: readonly string[]): Promise<string> {
   const bytes = new Uint8Array(digest);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Build an HMAC-signed token for a public media URL.
+ * Format: `{merchantId}:{assetId}:{expiresAt}:{signature}`
+ */
+export async function signPublicMediaToken(
+  secret: string,
+  merchantId: string,
+  assetId: string,
+  expiresAt: number,
+): Promise<string> {
+  const payload = `${merchantId}:${assetId}:${expiresAt}`;
+  const sig = await hmacSha256Hex(secret, utf8(payload));
+  return `${payload}:${sig}`;
+}
+
+/**
+ * Verify a public media token. Returns the assetId on success, null on
+ * failure (bad signature, expired, or malformed).
+ */
+export async function verifyPublicMediaToken(
+  secret: string,
+  token: string,
+): Promise<{ merchantId: string; assetId: string } | null> {
+  const parts = token.split(':');
+  if (parts.length !== 4) return null;
+  const [merchantId, assetId, expiresAtStr, suppliedSig] = parts;
+  if (!merchantId || !assetId || !expiresAtStr || !suppliedSig) return null;
+  const expiresAt = Number(expiresAtStr);
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return null;
+  const payload = `${merchantId}:${assetId}:${expiresAtStr}`;
+  const expected = await hmacSha256Hex(secret, utf8(payload));
+  if (!constantTimeEqual(suppliedSig, expected)) return null;
+  return { merchantId, assetId };
+}

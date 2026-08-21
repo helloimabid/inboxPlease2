@@ -18,7 +18,7 @@ import {
   reconcileFacebookPageSubscriptions,
 } from './routes/facebook';
 import { healthRoutes } from './routes/health';
-import { mediaRoutes } from './routes/media';
+import { mediaRoutes, publicMediaRoutes } from './routes/media';
 import { ordersRoutes } from './routes/orders';
 import { settingsRoutes } from './routes/settings';
 import { webhookRoutes } from './routes/webhooks';
@@ -55,6 +55,7 @@ const app = new Hono<AppEnv>()
   .route('/health', healthRoutes)
   .route('/auth', authAccountRoutes)
   .route('/webhooks', webhookRoutes)
+  .route('/api/media/public', publicMediaRoutes)
   .use('/facebook/*', requireAuth)
   .route('/facebook', facebookCallbackRoutes)
   .use('/api/*', requireAuth)

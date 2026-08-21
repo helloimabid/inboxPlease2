@@ -1,7 +1,7 @@
 import { flag, numberSetting } from './config';
 import type { Bindings } from './env';
 import { runWithTools } from '@cloudflare/ai-utils';
-import { base64Encode, sha256Name } from './security';
+import { base64Encode, sha256Name, signPublicMediaToken } from './security';
 import { createOrderCore, getOrderStatusForCustomer, OrderCreationError } from './orders-core';
 import { createSslCommerzCheckout } from './integrations/sslcommerz';
 
@@ -246,6 +246,8 @@ export function buildCommerceSystemPrompt(input: ReplyInput): string {
     stock: item.stock,
     // Clarify stock is a count of units, not weight.
     stockUnit: 'units',
+    // Signed image URL for Messenger to render. Only included when available.
+    ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
   }));
   const assistantName = settings.assistantName?.slice(0, 80) || 'InboxPlease';
   const storeDescription = settings.storeDescription?.slice(0, 1_000) || '';
@@ -260,6 +262,9 @@ export function buildCommerceSystemPrompt(input: ReplyInput): string {
       + 'or narrate your steps ("checking...", "let me look up..."). Just answer directly in one clean message.',
     'When presenting prices, use the `price` (major units) and `currency` fields exactly as provided. Do NOT multiply, rescale, or reinterpret `priceMinor` — it is internal only.',
     'When describing inventory, always include `stockUnit` and do not assume a weight unit such as "kg" unless the product explicitly provides a weight field.',
+    'When a customer asks for a product photo or image, send the imageUrl from that product in the STORE_DATA as a standalone message '
+      + '(just the URL on its own line, no other text). Messenger will render it as an image. '
+      + 'Only send one image per message. If a product has no imageUrl, say the image is not available.',
     'Offer only catalog items with stock above zero. Ask one short clarifying question when the data is insufficient.',
     // Anti-fabrication guardrail -- the actual fix for a real bug where the
     // model improvised a full checkout flow (collecting name/phone/address,
@@ -459,10 +464,27 @@ export async function generateReply(
       }
     : undefined;
   const ai = aiBinding(env, gatewayOptions);
+  // Precompute signed image URLs so the model can reference them in replies.
+  // Messenger will fetch these URLs to render product images inline.
+  const secret = env.AUTH_SECRET ?? '';
+  const baseUrl = env.PUBLIC_API_BASE_URL ?? '';
+  const catalogWithImages: CatalogContextItem[] = await Promise.all(
+    (input.commerce?.catalog ?? []).map(async (item) => {
+      if (item.imageId && secret && baseUrl) {
+        const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+        const token = await signPublicMediaToken(secret, input.merchantId, item.imageId, expiresAt);
+        return { ...item, imageUrl: `${baseUrl}/api/media/public/${token}` };
+      }
+      return { ...item };
+    }),
+  );
   const messages = [
     {
       role: 'system' as const,
-      content: buildCommerceSystemPrompt(input),
+      content: buildCommerceSystemPrompt({
+        ...input,
+        commerce: { ...input.commerce, catalog: catalogWithImages },
+      }),
     },
     ...input.messages,
   ];
@@ -624,12 +646,14 @@ export interface CatalogVisionItem {
   name: string;
   description: string;
   sku: string;
+  imageId?: string | null;
 }
 
 export interface CatalogContextItem extends CatalogVisionItem {
   priceMinor: number;
   currency: string;
   stock: number;
+  imageUrl?: string;
 }
 
 export interface VisionMatch {

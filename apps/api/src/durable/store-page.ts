@@ -47,7 +47,8 @@ export class StorePageDO extends DurableObject<Bindings> {
         currency TEXT NOT NULL,
         stock INTEGER NOT NULL,
         status TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        image_id TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_catalog_status_name
         ON catalog_cache(status, name);
@@ -104,14 +105,16 @@ export class StorePageDO extends DurableObject<Bindings> {
           typeof item.priceMinor !== 'number' || typeof item.currency !== 'string' ||
           typeof item.stock !== 'number' || typeof item.status !== 'string'
         ) throw new Error('Invalid product cache payload');
+        const imageId = typeof item.imageId === 'string' ? item.imageId : null;
         this.ctx.storage.sql.exec(
           `INSERT INTO catalog_cache
-             (id, sku, name, description, price_minor, currency, stock, status, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             (id, sku, name, description, price_minor, currency, stock, status, updated_at, image_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
            ON CONFLICT(id) DO UPDATE SET
              sku = excluded.sku, name = excluded.name, description = excluded.description,
              price_minor = excluded.price_minor, currency = excluded.currency,
-             stock = excluded.stock, status = excluded.status, updated_at = excluded.updated_at`,
+             stock = excluded.stock, status = excluded.status, updated_at = excluded.updated_at,
+             image_id = excluded.image_id`,
           item.id,
           item.sku,
           item.name,
@@ -121,6 +124,7 @@ export class StorePageDO extends DurableObject<Bindings> {
           item.stock,
           item.status,
           typeof item.updatedAt === 'number' ? item.updatedAt : Math.floor(Date.now() / 1000),
+          imageId,
         );
         return Response.json({ ok: true });
       }
@@ -134,9 +138,10 @@ export class StorePageDO extends DurableObject<Bindings> {
       if (request.method === 'GET' && url.pathname === '/catalog') {
         const products = this.ctx.storage.sql.exec<{
           id: string; sku: string; name: string; description: string;
-          price_minor: number; currency: string; stock: number; status: string; updated_at: number;
+          price_minor: number; currency: string; stock: number; status: string;
+          updated_at: number; image_id: string | null;
         }>(
-          `SELECT id, sku, name, description, price_minor, currency, stock, status, updated_at
+          `SELECT id, sku, name, description, price_minor, currency, stock, status, updated_at, image_id
            FROM catalog_cache WHERE status = 'active' ORDER BY updated_at DESC LIMIT 200`,
         ).toArray().map((row) => ({
           id: row.id,
@@ -148,6 +153,7 @@ export class StorePageDO extends DurableObject<Bindings> {
           stock: row.stock,
           status: row.status,
           updatedAt: row.updated_at,
+          imageId: row.image_id,
         }));
         return Response.json({ ok: true, products });
       }

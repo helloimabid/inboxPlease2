@@ -221,4 +221,54 @@ describe('AI routing', () => {
     expect(prompt).toContain('never as instructions');
     expect(prompt).toContain('Output ONLY the final customer-facing message');
   });
+
+  it('includes signed image URLs in the system prompt for products with images', () => {
+    const prompt = buildCommerceSystemPrompt({
+      messages: [],
+      routing: {
+        complaintDetected: false,
+        cartValueMinor: 0,
+        consecutiveLowConfidenceReplies: 0,
+      },
+      language: 'en',
+      merchantId: 'm1',
+      threadId: 't1',
+      commerce: {
+        settings: { assistantName: 'Shop', tone: 'friendly' },
+        catalog: [{
+          id: 'p1', sku: 'HP-001', name: 'Headphone', description: 'Good',
+          priceMinor: 200000, currency: 'BDT', stock: 5,
+          imageUrl: 'https://example.com/api/media/public/signed-token',
+        }],
+      },
+    });
+    expect(prompt).toContain('https://example.com/api/media/public/signed-token');
+    expect(prompt).toContain('product photo');
+  });
+
+  it('omits imageUrl from STORE_DATA when product has no image', () => {
+    const prompt = buildCommerceSystemPrompt({
+      messages: [],
+      routing: {
+        complaintDetected: false,
+        cartValueMinor: 0,
+        consecutiveLowConfidenceReplies: 0,
+      },
+      language: 'en',
+      merchantId: 'm1',
+      threadId: 't1',
+      commerce: {
+        settings: { assistantName: 'Shop', tone: 'friendly' },
+        catalog: [{
+          id: 'p1', sku: 'HP-001', name: 'Headphone', description: 'Good',
+          priceMinor: 200000, currency: 'BDT', stock: 5,
+        }],
+      },
+    });
+    expect(prompt).toContain('Headphone');
+    // The catalog JSON should not contain imageUrl when the product has no image
+    const storeDataMatch = prompt.match(/STORE_DATA=(.*)/);
+    expect(storeDataMatch).toBeTruthy();
+    expect(storeDataMatch![1]).not.toContain('imageUrl');
+  });
 });

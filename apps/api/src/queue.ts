@@ -188,7 +188,12 @@ interface FlexibleVectorIndex {
   deleteByIds(ids: string[]): Promise<unknown>;
 }
 
-async function syncStorePage(env: Bindings, job: CatalogQueueJob, product?: ProductRow) {
+async function syncStorePage(
+  env: Bindings,
+  job: CatalogQueueJob,
+  product?: ProductRow,
+  imageId?: string | null,
+) {
   const name = await storePageObjectName(job.merchantId, job.pageId);
   const stub = env.STORE_PAGES.get(env.STORE_PAGES.idFromName(name));
   const bootstrap = await stub.fetch('https://do.internal/bootstrap', {
@@ -214,6 +219,7 @@ async function syncStorePage(env: Bindings, job: CatalogQueueJob, product?: Prod
             stock: product.stock,
             status: product.status,
             updatedAt: product.updated_at,
+            imageId: imageId ?? null,
           },
         }),
       })
@@ -239,16 +245,22 @@ async function processCatalogJob(env: Bindings, job: CatalogQueueJob) {
     await syncStorePage(env, job);
     return;
   }
-  const variants = await env.DB.prepare(
-    `SELECT sku, name, price_minor, stock FROM product_variants
-     WHERE merchant_id = ?1 AND product_id = ?2
-     ORDER BY position, created_at`,
-  ).bind(job.merchantId, job.productId).all<{
-    sku: string;
-    name: string;
-    price_minor: number;
-    stock: number;
-  }>();
+  const [variants, primaryImage] = await Promise.all([
+    env.DB.prepare(
+      `SELECT sku, name, price_minor, stock FROM product_variants
+       WHERE merchant_id = ?1 AND product_id = ?2
+       ORDER BY position, created_at`,
+    ).bind(job.merchantId, job.productId).all<{
+      sku: string;
+      name: string;
+      price_minor: number;
+      stock: number;
+    }>(),
+    env.DB.prepare(
+      `SELECT id FROM media_assets
+       WHERE merchant_id = ?1 AND product_id = ?2 AND variant_id IS NULL AND role = 'primary'`,
+    ).bind(job.merchantId, job.productId).first<{ id: string }>(),
+  ]);
   const variantContext = variants.results.length
     ? `\nVariants:\n${variants.results.map((variant) =>
         `${variant.name} (SKU ${variant.sku}): ${variant.price_minor} ${product.currency} minor units, ${variant.stock} in stock`
@@ -258,7 +270,7 @@ async function processCatalogJob(env: Bindings, job: CatalogQueueJob) {
     ...product,
     description: `${product.description}${variantContext}`,
   };
-  await syncStorePage(env, job, contextualProduct);
+  await syncStorePage(env, job, contextualProduct, primaryImage?.id);
   if (product.status !== 'active') {
     if (flag(env.VECTOR_SEARCH_ENABLED)) await vectorIndex.deleteByIds([job.productId]);
     return;
