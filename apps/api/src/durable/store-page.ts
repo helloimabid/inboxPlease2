@@ -47,8 +47,7 @@ export class StorePageDO extends DurableObject<Bindings> {
         currency TEXT NOT NULL,
         stock INTEGER NOT NULL,
         status TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        image_id TEXT
+        updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_catalog_status_name
         ON catalog_cache(status, name);
@@ -58,6 +57,15 @@ export class StorePageDO extends DurableObject<Bindings> {
         updated_at INTEGER NOT NULL
       );
     `);
+    // Migrate existing catalog_cache tables that lack the image_id column.
+    const hasImageId = this.ctx.storage.sql
+      .exec<{ cnt: number }>(
+        "SELECT COUNT(*) as cnt FROM pragma_table_info('catalog_cache') WHERE name = 'image_id'",
+      )
+      .toArray()[0];
+    if (!hasImageId || hasImageId.cnt === 0) {
+      this.ctx.storage.sql.exec('ALTER TABLE catalog_cache ADD COLUMN image_id TEXT');
+    }
   }
 
   private bindOrAssertTenant(identity: TenantIdentity): void {
